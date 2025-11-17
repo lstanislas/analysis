@@ -142,8 +142,9 @@ bool ExtrapToVertex(TrackStruct& track);
 bool IsSelected(TrackStruct& track);
 void CompareTracks(std::vector<TrackStruct>& tracks1, std::vector<TrackStruct>& tracks2, std::vector<TH1*>& histos);
 void CreateResiduals(std::vector<TH1*>& histos, const char* extension, double range);
-void FillResiduals(std::vector<TrackStruct>& tracks, std::vector<TH1*>& histos, bool matched = false);
+void FillResiduals(std::vector<TrackStruct>& tracks, std::vector<TH1*>& histos, bool rejectMonoCathodes, bool matched = false);
 void FillResiduals(TrackStruct& track1, TrackStruct& track2, std::vector<TH1*>& histos);
+void NormResiduals(std::vector<TH1*>& histos);
 void DrawResiduals(std::vector<TH1*>& histos, const char* extension);
 void DrawResiduals(std::vector<TH1*>& histos1, std::vector<TH1*>& histos2, const char* extension);
 void DrawRatios(std::vector<TH1*>& histos1, std::vector<TH1*>& histos2, const char* extension);
@@ -154,7 +155,8 @@ double CrystalBallSymmetric(double* xx, double* par);
 void CompareTrackResolution(int run, float l3Current, float dipoleCurrent,
                             string inFileName1, int versionFile1,
                             string inFileName2, int versionFile2,
-                            bool selectTracks = false)
+                            bool selectTracks = false,
+                            bool rejectMonoCathodes = true)
 {
   /// Compare the cluster-track residuals between the tracks stored in the 2 binary files
   /// file version 4: param at vertex + dca + rAbs + chi2 + param at 1st cluster + clusters (v2)
@@ -200,7 +202,7 @@ void CompareTrackResolution(int run, float l3Current, float dipoleCurrent,
       } else {
         ReadNextEventV5<TrackMCH>(inFile1, event1, selectTracks, tracks1);
       }
-      FillResiduals(tracks1, residuals[0]);
+      FillResiduals(tracks1, residuals[0], rejectMonoCathodes);
     }
 
     if (readNextEvent2) {
@@ -211,7 +213,7 @@ void CompareTrackResolution(int run, float l3Current, float dipoleCurrent,
       } else {
         ReadNextEventV5<TrackMCH>(inFile2, event2, selectTracks, tracks2);
       }
-      FillResiduals(tracks2, residuals[1]);
+      FillResiduals(tracks2, residuals[1], rejectMonoCathodes);
     }
 
     // reaching end of both files
@@ -222,8 +224,8 @@ void CompareTrackResolution(int run, float l3Current, float dipoleCurrent,
     if (event1 == event2) {
       // reading the same event --> we can compare tracks
       CompareTracks(tracks1, tracks2, residuals[4]);
-      FillResiduals(tracks1, residuals[2], true);
-      FillResiduals(tracks2, residuals[3], true);
+      FillResiduals(tracks1, residuals[2], rejectMonoCathodes, true);
+      FillResiduals(tracks2, residuals[3], rejectMonoCathodes, true);
       readNextEvent1 = true;
       readNextEvent2 = true;
     } else if (event2 < 0 || (event1 >= 0 && event1 < event2)) {
@@ -254,11 +256,14 @@ void CompareTrackResolution(int run, float l3Current, float dipoleCurrent,
 void CompareTrackResolution(int run,
                             string mchFileName1, string muonFileName1,
                             string mchFileName2, string muonFileName2,
-                            bool selectTracks = false, bool selectMatched = false)
+                            bool selectTracks = false, bool selectMatched = false,
+                            bool rejectMonoCathodes = true)
 {
   /// Compare the cluster-track residuals between the tracks stored in the 2 sets of root files
 
   /// access CCDB and prepare track extrapolation
+  // o2::base::GeometryManager::loadGeometry("O2geometry.root");
+  // trackFitter.initField(29999.998047, 5999.966797);
   LoadCCDB(run);
   trackFitter.smoothTracks(true);
 
@@ -275,12 +280,18 @@ void CompareTrackResolution(int run,
   TTreeReaderValue<std::vector<Cluster>> mchClusters2 = {*mchReader2, "trackclusters"};
   auto [fMUON2, muonReader2] = LoadData(muonFileName2.c_str(), "o2sim");
   TTreeReaderValue<std::vector<TrackMCHMID>> muonTracks2 = {*muonReader2, "tracks"};
-  int nTF = mchReader1->GetEntries(false);
-  if (muonReader1->GetEntries(false) != nTF ||
-      mchReader2->GetEntries(false) != nTF ||
-      muonReader2->GetEntries(false) != nTF) {
-    LOG(error) << " not all files contain the same number of TF";
+  int nTF1 = mchReader1->GetEntries(false);
+  if (muonReader1->GetEntries(false) != nTF1) {
+    LOGP(error, " {} and {} do not contain the same number of TF", mchFileName1, muonFileName1);
     exit(-1);
+  }
+  int nTF2 = mchReader2->GetEntries(false);
+  if (muonReader2->GetEntries(false) != nTF2) {
+    LOGP(error, " {} and {} do not contain the same number of TF", mchFileName2, muonFileName2);
+    exit(-1);
+  }
+  if (nTF1 != nTF2) {
+    LOGP(warning, "the two set of files do not contain the same number of TF ({} vs {})", nTF1, nTF2);
   }
 
   std::vector<TrackStruct> tracks1{};
@@ -292,15 +303,33 @@ void CompareTrackResolution(int run,
   CreateResiduals(residuals[3], "Matched2", 2.);
   CreateResiduals(residuals[4], "ClCl", 0.2);
 
-  int iTF = -1;
-  while (mchReader1->Next() && muonReader1->Next() && mchReader2->Next() && muonReader2->Next()) {
-    cout << "\rprocessing TF " << ++iTF << "..." << flush;
+  int nTF = TMath::Max(nTF1, nTF2);
+  for (int iTF = 0; iTF < nTF; ++iTF) {
+    cout << "\rprocessing TF " << iTF << "..." << flush;
 
-    auto nROFs = TMath::Max(mchROFs1->size(), mchROFs2->size());
+    size_t nROFs1 = 0;
+    if (iTF < nTF1) {
+      if (!mchReader1->Next() || !muonReader1->Next()) {
+        LOGP(error, "cannot read the next TF in the first set of files");
+        exit(-1);
+      }
+      nROFs1 = mchROFs1->size();
+    }
+
+    size_t nROFs2 = 0;
+    if (iTF < nTF2) {
+      if (!mchReader2->Next() || !muonReader2->Next()) {
+        LOGP(error, "cannot read the next TF in the second set of files");
+        exit(-1);
+      }
+      nROFs2 = mchROFs2->size();
+    }
+
+    auto nROFs = TMath::Max(nROFs1, nROFs2);
     int iROF1(-1), iROF2(-1);
     for (size_t iROF = 0; iROF < nROFs; ++iROF) {
 
-      if (iROF < mchROFs1->size()) {
+      if (iROF < nROFs1) {
         ++iROF1;
         const auto& mchROF1 = (*mchROFs1)[iROF];
         tracks1.clear();
@@ -316,10 +345,10 @@ void CompareTrackResolution(int run,
             tracks1.pop_back();
           }
         }
-        FillResiduals(tracks1, residuals[0]);
+        FillResiduals(tracks1, residuals[0], rejectMonoCathodes);
       }
 
-      if (iROF < mchROFs2->size()) {
+      if (iROF < nROFs2) {
         ++iROF2;
         const auto& mchROF2 = (*mchROFs2)[iROF];
         tracks2.clear();
@@ -335,19 +364,24 @@ void CompareTrackResolution(int run,
             tracks2.pop_back();
           }
         }
-        FillResiduals(tracks2, residuals[1]);
+        FillResiduals(tracks2, residuals[1], rejectMonoCathodes);
       }
 
       if (iROF1 == iROF2) {
         // reading the same event --> we can compare tracks
         CompareTracks(tracks1, tracks2, residuals[4]);
-        FillResiduals(tracks1, residuals[2], true);
-        FillResiduals(tracks2, residuals[3], true);
+        FillResiduals(tracks1, residuals[2], rejectMonoCathodes, true);
+        FillResiduals(tracks2, residuals[3], rejectMonoCathodes, true);
       }
     }
   }
 
   cout << "\r\033[Kprocessing completed" << endl;
+
+  if (nTF1 != nTF2) {
+    NormResiduals(residuals[0]);
+    NormResiduals(residuals[1]);
+  }
 
   gStyle->SetOptStat(1);
   DrawResiduals(residuals[4], "ClCl");
@@ -756,18 +790,33 @@ void FillResiduals(TrackStruct& track1, TrackStruct& track2, std::vector<TH1*>& 
 }
 
 //_________________________________________________________________________________________________
-void FillResiduals(std::vector<TrackStruct>& tracks, std::vector<TH1*>& histos, bool matched)
+void FillResiduals(std::vector<TrackStruct>& tracks, std::vector<TH1*>& histos, bool rejectMonoCathodes, bool matched)
 {
   /// fill histograms of cluster-track residuals
+  /// if rejectMonoCathodes, skip the residual in the direction that is not measured
   for (const auto& track : tracks) {
     if (!matched || track.matchFound) {
       for (const auto& param : track.track) {
-        histos[param.getClusterPtr()->getChamberId() / 2 * 2]->Fill(param.getClusterPtr()->getX() - param.getNonBendingCoor());
-        histos[param.getClusterPtr()->getChamberId() / 2 * 2 + 1]->Fill(param.getClusterPtr()->getY() - param.getBendingCoor());
-        histos[10]->Fill(param.getClusterPtr()->getX() - param.getNonBendingCoor());
-        histos[11]->Fill(param.getClusterPtr()->getY() - param.getBendingCoor());
+        if (!rejectMonoCathodes || param.getClusterPtr()->getEx() < 5.) {
+          histos[param.getClusterPtr()->getChamberId() / 2 * 2]->Fill(param.getClusterPtr()->getX() - param.getNonBendingCoor());
+          histos[10]->Fill(param.getClusterPtr()->getX() - param.getNonBendingCoor());
+        }
+        if (!rejectMonoCathodes || param.getClusterPtr()->getEy() < 5.) {
+          histos[param.getClusterPtr()->getChamberId() / 2 * 2 + 1]->Fill(param.getClusterPtr()->getY() - param.getBendingCoor());
+          histos[11]->Fill(param.getClusterPtr()->getY() - param.getBendingCoor());
+        }
       }
     }
+  }
+}
+
+//_________________________________________________________________________________________________
+void NormResiduals(std::vector<TH1*>& histos)
+{
+  /// normalize histograms
+
+  for (auto& h : histos) {
+    h->Scale(1. / h->GetEntries());
   }
 }
 
@@ -870,6 +919,7 @@ void DrawRatios(std::vector<TH1*>& histos1, std::vector<TH1*>& histos2, const ch
     hRat->SetLineColor(2);
     hRat->Draw();
     hRat->GetXaxis()->SetRangeUser(-0.5, 0.5);
+    hRat->GetYaxis()->SetRangeUser(0.8, 1.2);
     ++i;
   }
 }

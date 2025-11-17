@@ -1,9 +1,14 @@
+#include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <unordered_map>
+
+#include <fmt/format.h>
 
 #include <gsl/span>
 
@@ -12,6 +17,7 @@
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
 #include <TF1.h>
+#include <TH1D.h>
 #include <TH1F.h>
 #include <TH2F.h>
 #include <TCanvas.h>
@@ -77,8 +83,15 @@ const std::unordered_map<uint32_t, uint32_t> firstTForbit0perRun{
   {529414, 860032},
   {529691, 74406400},
   {544490, 26693600},
+  {549586, 67400512},
+  {559410, 527962048},
+  {562849, 179331744},
   {562967, 47243328},
-  {562968, 62076224}};
+  {562968, 62076224},
+  {562970, 86353952},
+  {562971, 97188864},
+  {562975, 146579680},
+  {562976, 160383072}};
 
 struct TrackInfo {
   TrackInfo(const mch::TrackMCH& mch) : mchTrack(mch) {}
@@ -140,6 +153,9 @@ void DrawChargeHistos(gsl::span<TH1*> histos, const char* extension);
 void CreateCorrelationHistos(std::vector<TH1*>& histos);
 void FillCorrelationHistos(const std::vector<const mch::Digit*>& digits, TH1* hist, double timeRef, int deMin = 100, int deMax = 1025);
 void DrawCorrelationHistos(std::vector<TH1*>& histos);
+void CreateMultHistos(std::vector<TH1*>& histos);
+void FillMultHistos(const mch::ROFRecord& rof, const std::vector<mch::Cluster>& clusters, std::vector<TH1*>& histos);
+void DrawMultHistos(std::vector<TH1*>& histos);
 double signalCut(double* x, double* p);
 double backgroundCut(double* x, double* p);
 void WriteHistos(TFile* f, const char* dirName, const std::vector<TH1*>& histos);
@@ -198,10 +214,12 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
   auto [fMCH, mchReader] = LoadData(mchFileName.c_str(), "o2sim");
   TTreeReaderValue<std::vector<mch::ROFRecord>> mchROFs = {*mchReader, "trackrofs"};
   TTreeReaderValue<std::vector<mch::TrackMCH>> mchTracks = {*mchReader, "tracks"};
-  TTreeReaderValue<std::vector<mch::Cluster>> mchClusters = {*mchReader, "trackclusters"};
+  TTreeReaderValue<std::vector<mch::Cluster>> mchTrackClusters = {*mchReader, "trackclusters"};
   TFile* fClusters = nullptr;
   TTreeReader* clusterReader = nullptr;
   std::unique_ptr<TTreeReaderValue<std::vector<mch::Digit>>> mchDigits{};
+  std::unique_ptr<TTreeReaderValue<std::vector<mch::Cluster>>> mchClusters{};
+  std::unique_ptr<TTreeReaderValue<std::vector<mch::ROFRecord>>> mchClusterROFs{};
   if (clusterFileName.empty()) {
     //read digits from the mchtracks.root
     if (mchReader->GetTree()->FindBranch("trackdigits")) {
@@ -217,6 +235,8 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
     }
     std::tie(fClusters, clusterReader) = LoadData(clusterFileName.c_str(), "o2sim");
     mchDigits = std::make_unique<TTreeReaderValue<std::vector<mch::Digit>>>(*clusterReader, "clusterdigits");
+    mchClusters = std::make_unique<TTreeReaderValue<std::vector<mch::Cluster>>>(*clusterReader, "clusters");
+    mchClusterROFs = std::make_unique<TTreeReaderValue<std::vector<mch::ROFRecord>>>(*clusterReader, "clusterrofs");
   }
   auto [fMUON, muonReader] = LoadData(muonFileName.c_str(), "o2sim");
   TTreeReaderValue<std::vector<dataformats::TrackMCHMID>> muonTracks = {*muonReader, "tracks"};
@@ -265,12 +285,33 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
   CreateChargeHistos(chargeHistosSt345, "St345");
   std::vector<TH1*> corrHistos{};
   CreateCorrelationHistos(corrHistos);
+  std::vector<TH1*> multHistos{};
+  CreateMultHistos(multHistos);
   TH1F* hMass = new TH1F("mass", "#mu^{+}#mu^{-} invariant mass;mass (GeV/c^{2})", 1600, 0., 20.);
   hMass->SetDirectory(0);
 
+  int iTF = 0;
+  int nROFs[4] = {0, 0, 0, 0};
   while (mchReader->Next() && muonReader->Next() && (clusterReader == nullptr || clusterReader->Next())) {
+    if (++iTF % 1000 == 0) {
+      std::cout << "\rprocessing TF " << iTF << " / " << nTF << "..." << std::flush;
+    }
 
-    for (const auto& mchROF : *mchROFs) {
+    if (mchClusterROFs && (*mchClusterROFs)->size() != mchROFs->size()) {
+      LOGP(error, "{} and {} do not contain the same number of ROFs in TF {}", mchFileName, clusterFileName, iTF);
+      exit(-1);
+    }
+
+    // count total number of ROFs
+    nROFs[0] += mchROFs->size();
+
+    for (size_t iROF = 0; iROF < mchROFs->size(); ++iROF) {
+      const auto& mchROF = (*mchROFs)[iROF];
+
+      // count number of ROFs with MCH track(s)
+      if (mchROF.getNEntries() > 0) {
+        nROFs[1]++;
+      }
 
       int rofTime[2] = {0, 0};
       rofTime[0] = IRtoBCinTF(mchROF.getBCData(), firstTForbit0, isMC);
@@ -286,7 +327,15 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
 
       std::vector<ROOT::Math::PxPyPzMVector> muVector{};
       std::vector<int> muSign{};
+      bool containsMuon = false;
+      bool containsSelectedMuon = false;
       for (int iMCHTrack = mchROF.getFirstIdx(); iMCHTrack <= mchROF.getLastIdx(); ++iMCHTrack) {
+
+        // find the corresponding MCH-MID matched track
+        auto muon = FindMuon(iMCHTrack, *muonTracks);
+        if (muon) {
+          containsMuon = true;
+        }
 
         TrackInfo trackInfo((*mchTracks)[iMCHTrack]);
         // if (trackInfo.mchTrack.getNClusters() != 10) {
@@ -304,9 +353,9 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
           continue;
         }
 
-        // find the corresponding MCH-MID matched track
-        auto muon = FindMuon(iMCHTrack, *muonTracks);
+        // fill MID timing info
         if (muon) {
+          containsSelectedMuon = true;
           trackInfo.midTime = IRtoBCinTF(muon->getIR(), firstTForbit0, isMC);
           // check that MID time is within MCH ROF boundaries
           if (trackInfo.midTime < rofTime[0] || trackInfo.midTime > rofTime[1]) {
@@ -316,7 +365,7 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
 
         // fill digit info
         if (mchDigits) {
-          LoadDigits(trackInfo, *mchClusters, **mchDigits, selectSignal, rejectBackground);
+          LoadDigits(trackInfo, *mchTrackClusters, **mchDigits, selectSignal, rejectBackground);
           computeMCHTime(trackInfo.digits, trackInfo.mchTime, trackInfo.mchTimeRMS);
           // float dt = (*mchTracks)[iMCHTrack].getTimeMUS().getTimeStamp() - static_cast<float>(o2::constants::lhc::LHCBunchSpacingMUS * trackInfo.mchTime);
           // if (dt != 0.f) {
@@ -358,7 +407,7 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
           FillHistosAtVertex(trackInfo, histosAtVertex[1]);
           hmatchChi2->Fill(muon->getMatchChi2OverNDF());
           for (int iCl = trackInfo.mchTrack.getFirstClusterIdx(); iCl <= trackInfo.mchTrack.getLastClusterIdx(); ++iCl) {
-            hNClustersPerCh->Fill((*mchClusters)[iCl].getChamberId() + 1);
+            hNClustersPerCh->Fill((*mchTrackClusters)[iCl].getChamberId() + 1);
           }
           FillChargeHistos(trackInfo.digits, {&chargeHistos[3], 3});
           FillChargeHistos(trackInfo.digitsAtClusterPos, {&chargeHistos[9], 3});
@@ -390,6 +439,19 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
         FillROFTimeHistos(rofTime, trackInfo.mchTime, trackInfo.midTime, rofTimeHistos);
       }
 
+      // count number of ROFs with muon track(s)
+      if (containsMuon) {
+        nROFs[2]++;
+      }
+
+      // count number of ROFs with selected muon track(s) and fill cluster multiplicity histograms for them
+      if (containsSelectedMuon) {
+        nROFs[3]++;
+        if (mchClusterROFs) {
+          FillMultHistos((**mchClusterROFs)[iROF], **mchClusters, multHistos);
+        }
+      }
+
       if (muVector.size() > 1) {
         for (size_t i = 0; i < muVector.size(); ++i) {
           for (size_t j = i + 1; j < muVector.size(); ++j) {
@@ -402,6 +464,12 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
       }
     }
   }
+  std::cout << "\r\033[Kprocessing " << nTF << " TF completed" << std::endl;
+
+  std::cout << "total number of ROFs = " << nROFs[0] << std::endl;
+  std::cout << "with tracks          = " << nROFs[1] << " (" << 100. * nROFs[1] / nROFs[0] << " %)" << std::endl;
+  std::cout << "with muons           = " << nROFs[2] << " (" << 100. * nROFs[2] / nROFs[0] << " %)" << std::endl;
+  std::cout << "with selected muons  = " << nROFs[3] << " (" << 100. * nROFs[3] / nROFs[0] << " %)" << std::endl;
 
   fMCH->Close();
   if (fClusters != nullptr) {
@@ -414,8 +482,10 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
   // store histograms if requested
   if (fOut) {
     fOut->cd();
-    TParameter<int> p("nTF", nTF);
-    p.Write();
+    TParameter<int> p1("nTF", nTF);
+    p1.Write();
+    TParameter<int> p2("nROFSelected", nROFs[3]);
+    p2.Write();
     WriteHistos(fOut, "general", histosAtVertex[0]);
     WriteHistos(fOut, "general", histosAtVertex[1]);
     hmatchChi2->Write();
@@ -429,6 +499,7 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
     WriteHistos(fOut, "charge", chargeHistosSt2);
     WriteHistos(fOut, "charge", chargeHistosSt345);
     WriteHistos(fOut, "correlations", corrHistos);
+    WriteHistos(fOut, "multiplicity", multHistos);
     fOut->Close();
   }
 
@@ -455,6 +526,7 @@ void DisplayTracks(int runNumber, std::string clusterFileName = "",
   DrawChargeHistos({&chargeHistosSt345[0], 6}, "St345_AllDigits");
   DrawChargeHistos({&chargeHistosSt345[6], 6}, "St345_DigitsAtClusterPos");
   DrawCorrelationHistos(corrHistos);
+  DrawMultHistos(multHistos);
   TCanvas* cMass = new TCanvas();
   gPad->SetLogy();
   hMass->Draw();
@@ -1072,6 +1144,78 @@ void DrawCorrelationHistos(std::vector<TH1*>& histos)
     cCorr->cd(i + 1);
     gPad->SetLogz();
     histos[i]->Draw("boxcolz");
+  }
+}
+
+//_________________________________________________________________________________________________
+void CreateMultHistos(std::vector<TH1*>& histos)
+{
+  /// create multiplicity histograms
+
+  static const int nDE[10] = {4, 4, 4, 4, 18, 18, 26, 26, 26, 26};
+
+  histos.emplace_back(new TH1D("nClustersTotPerCh", "number of clusters per chamber;chamber", 10, 0.5, 10.5));
+
+  for (int i = 0; i < 10; ++i) {
+    histos.emplace_back(new TH1D(fmt::format("nClustersTotPerDEinCh{}", i + 1).c_str(),
+                                 fmt::format("number of clusters per DE in chamber {};DE", i + 1).c_str(),
+                                 nDE[i], 100 * (i + 1) - 0.5, 100 * (i + 1) + nDE[i] - 0.5));
+  }
+
+  histos.emplace_back(new TH1D("nClustersTot", "number of clusters;#clusters", 10001, -0.5, 10000.5));
+
+  for (int i = 0; i < 10; ++i) {
+    histos.emplace_back(new TH1D(fmt::format("nClustersTotinCh{}", i + 1).c_str(),
+                                 fmt::format("number of clusters in chamber {};#clusters", i + 1).c_str(),
+                                 2001, -0.5, 2000.5));
+  }
+
+  for (auto h : histos) {
+    h->SetDirectory(0);
+  }
+}
+
+//_________________________________________________________________________________________________
+void FillMultHistos(const mch::ROFRecord& rof, const std::vector<mch::Cluster>& clusters, std::vector<TH1*>& histos)
+{
+  /// fill multiplicity histograms
+
+  std::array<int, 10> nClusters{};
+
+  for (int i = rof.getFirstIdx(); i <= rof.getLastIdx(); ++i) {
+
+    const auto& cluster = clusters[i];
+    int chId = cluster.getChamberId();
+
+    histos[0]->Fill(chId + 1);
+    histos[chId + 1]->Fill(cluster.getDEId());
+
+    nClusters[chId]++;
+  }
+
+  histos[11]->Fill(rof.getNEntries());
+
+  for (int i = 0; i < 10; ++i) {
+    histos[12 + i]->Fill(nClusters[i]);
+  }
+}
+
+//_________________________________________________________________________________________________
+void DrawMultHistos(std::vector<TH1*>& histos)
+{
+  /// draw multiplicity histograms
+
+  TCanvas* cN = new TCanvas("cNClustersSelected", "cNClustersSelected", 10, 10, 300, 300);
+  cN->cd();
+  histos[11]->Draw();
+  gPad->SetLogy();
+
+  TCanvas* cNCh = new TCanvas("cNClustersPerChDistSelected", "cNClustersPerChDistSelected", 10, 10, 1500, 600);
+  cNCh->Divide(5, 2);
+  for (int i = 1; i <= 10; ++i) {
+    cNCh->cd(i);
+    histos[11 + i]->Draw();
+    gPad->SetLogy();
   }
 }
 

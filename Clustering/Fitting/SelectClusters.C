@@ -428,6 +428,7 @@ int IRtoBCinTF(o2::InteractionRecord ir, int run, bool isMC)
     {544490, 26693600},
     {549586, 67400512},
     {559410, 527962048},
+    {562849, 179331744},
     {562967, 47243328},
     {562968, 62076224},
     {562969, 74244704},
@@ -436,8 +437,7 @@ int IRtoBCinTF(o2::InteractionRecord ir, int run, bool isMC)
     {562972, 109218272},
     {562975, 146579680},
     {562976, 160383072},
-    {562979, 193958464}
-  };
+    {562979, 193958464}};
 
   static const std::unordered_map<int, int> nOrbitsPerTF{
     {295584, 1},
@@ -445,6 +445,7 @@ int IRtoBCinTF(o2::InteractionRecord ir, int run, bool isMC)
     {544490, 32},
     {549586, 32},
     {559410, 32},
+    {562849, 32},
     {562967, 32},
     {562968, 32},
     {562969, 32},

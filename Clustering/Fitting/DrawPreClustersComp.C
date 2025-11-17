@@ -40,20 +40,28 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
     t->SetTextColor(color[i]);
   }
 
-  auto hDraw = [norm, color, hDrawOpt](auto h, int i) {
+  auto hDraw = [norm, color, hDrawOpt](auto h, int i, double xMin, double xMax) {
     if (norm) {
       h->Scale(1. / h->GetEntries());
     }
     h->SetStats();
     h->SetLineColor(color[i]);
+    if (xMax > xMin) {
+      h->GetXaxis()->SetRangeUser(xMin, xMax);
+    }
     h->Draw(hDrawOpt[i].c_str());
   };
 
-  auto hDrawRat = [](auto h1, auto h2, double yMin, double yMax) {
+  auto hDrawRat = [](auto h1, auto h2, double xMin, double xMax, double yMin, double yMax) {
     TH1* hRat = static_cast<TH1*>(h2->Clone());
     hRat->Divide(h1);
     hRat->SetStats(false);
-    hRat->GetYaxis()->SetRangeUser(yMin, yMax);
+    if (xMax > xMin) {
+      hRat->GetXaxis()->SetRangeUser(xMin, xMax);
+    }
+    if (yMax > yMin) {
+      hRat->GetYaxis()->SetRangeUser(yMin, yMax);
+    }
     hRat->Draw();
   };
 
@@ -68,6 +76,9 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
                             fmt::format("precluster characteristics ratio {}", sSt).c_str(), 10, 10, 1200, 600);
     cRat->Divide(3, 2);
     std::string hNameBase[] = {"hCharge", "hChargeB", "hChargeNB", "hChargeAsymm2", "hDimX", "hDimY"};
+    double xRange[6][2] = {{0., 10000.}, {0., 10000.}, {0., 10000.}, {1., -1.}, {0., 10.}, {0., 10.}};
+    double xRangeRat[6][2] = {{0., 3000.}, {0., 3000.}, {0., 3000.}, {1., -1.}, {1., 8.}, {1., 8.}};
+    double yRangeRat[6][2] = {{0.7, 1.3}, {0.7, 1.3}, {0.7, 1.3}, {0.5, 1.2}, {0.6, 1.4}, {0.6, 1.4}};
     for (int i = 0; i < 6; ++i) {
       auto hName = fmt::format("{}{}", hNameBase[i], sSt);
       TH1* h[2];
@@ -75,10 +86,10 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
         h[j] = GetClone<TH1>(f[j], cName, hName, fmt::format("_{}", j + 1));
         c->cd(i + 1);
         gPad->SetLogy();
-        hDraw(h[j], j);
+        hDraw(h[j], j, xRange[i][0], xRange[i][1]);
       }
       cRat->cd(i + 1);
-      hDrawRat(h[0], h[1], 0.7, 1.3);
+      hDrawRat(h[0], h[1], xRangeRat[i][0], xRangeRat[i][1], yRangeRat[i][0], yRangeRat[i][1]);
     }
     c->cd(1);
     l->Clone()->Draw("same");
@@ -91,6 +102,9 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
                        fmt::format("digit characteristics ratio {}", sSt).c_str(), 10, 10, 1200, 600);
     cRat->Divide(3, 2);
     std::string hNameBase2[] = {"ADC", "ADCB", "ADCNB", "Samples", "SamplesB", "SamplesNB"};
+    double xRange2[6][2] = {{0., 100.}, {0., 100.}, {0., 100.}, {0., 40.}, {0., 40.}, {0., 40.}};
+    double xRangeRat2[6][2] = {{0., 1000.}, {0., 1000.}, {0., 1000.}, {0., 100.}, {0., 100.}, {0., 100.}};
+    double yRangeRat2[6][2] = {{0.7, 1.3}, {0.7, 1.3}, {0.7, 1.3}, {0.6, 1.4}, {0.6, 1.4}, {0.6, 1.4}};
     for (int i = 0; i < 6; ++i) {
       auto hName = fmt::format("{}{}", hNameBase2[i], sSt);
       TH1* h[2];
@@ -98,10 +112,10 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
         h[j] = GetClone<TH1>(f[j], cName, hName, fmt::format("_{}", j + 1));
         c->cd(i + 1);
         gPad->SetLogy();
-        hDraw(h[j], j);
+        hDraw(h[j], j, xRange2[i][0], xRange2[i][1]);
       }
       cRat->cd(i + 1);
-      hDrawRat(h[0], h[1], 0.7, 1.3);
+      hDrawRat(h[0], h[1], xRangeRat2[i][0], xRangeRat2[i][1], yRangeRat2[i][0], yRangeRat2[i][1]);
     }
     c->cd(1);
     l->Clone()->Draw("same");
@@ -143,12 +157,12 @@ void DrawPreClustersComp(std::string file1 = "displays.root", std::string file2 
         h->SetTitle(hTitle.c_str());
         c->cd(i + 1);
         gPad->SetLogy();
-        hDraw(h, j);
+        hDraw(h, j, 1., -1.);
       }
     }
     for (size_t i = 0; i < chargeLimits.size(); ++i) {
       cRat->cd(i + 1);
-      hDrawRat(hAsymm[0][i], hAsymm[1][i], 0.5, 1.5);
+      hDrawRat(hAsymm[0][i], hAsymm[1][i], 1., -1., 0.5, 1.5);
     }
     c->cd(1);
     l->Clone()->Draw("same");
