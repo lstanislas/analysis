@@ -164,10 +164,10 @@ void K3Sparse(int run, const char* inFile = "clusters.root", const char* outFile
         break; // stop checking further digits if one fails
       }
     }
-    if (skip) { // skip cluster who have at least one ADCfit < correctADCfit
+    if (skip && correctADCfit > 0) {
       continue;
     }
-    if (!skip && (correctADCfit < 0)) { // skip cluster who have all ADCfit > correctADCfit (correcADCfit set to a negative integer)
+    if (!skip && correctADCfit < 0) {
       continue;
     }
 
@@ -181,7 +181,9 @@ void K3Sparse(int run, const char* inFile = "clusters.root", const char* outFile
     parameters.push_back(Track_angle);    // parameters[10]
     parameters.push_back(Track_momentum); // parameters[11]
 
-    FillK3Info(parameters, hPreClusterInfoMULTIK3[iSt]);
+    for (auto digit : selectedDigits) {
+      FillK3Info(digit, parameters, hPreClusterInfoMULTIK3[iSt]);
+    }
 
     // histograms that can't be in the THnSparse
     auto [nPadsNB, nPadsB] = GetNPads(selectedDigits);

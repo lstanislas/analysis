@@ -240,6 +240,7 @@ bool IsFittable(const gsl::span<const Digit> digits)
 
   if (digits.empty()) {
     LOGP(warning, "IsFittable: list of digits is empty");
+    std::cout << std::flush;
     return false;
   }
 

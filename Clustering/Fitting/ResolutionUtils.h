@@ -10,11 +10,17 @@
 
 #include <TF1.h>
 #include <THnSparse.h>
+#include <TH1D.h>
+#include <TH2D.h>
+#include <TAxis.h>
+#include <TList.h>
+#include <TString.h>
 #include <TFile.h>
 #include "TTreeReaderArray.h"
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
 
+#include "CommonUtils/ConfigurableParam.h"
 #include "DataFormatsMCH/Digit.h"
 #include "MCHMappingInterface/Segmentation.h"
 #include "MCHSimulation/Response.h"
@@ -42,7 +48,13 @@ double ADCFit(const Digit digit, std::vector<double> parameters)
 {
   auto sqrtK3x = sqrt(parameters[2]);
   auto sqrtK3y = sqrt(parameters[3]);
-  SetupMathieson(sqrtK3x, sqrtK3y, sqrtK3x, sqrtK3y);
+
+  static double lastSqrtK3x = -1., lastSqrtK3y = -1.;
+  if (sqrtK3x != lastSqrtK3x || sqrtK3y != lastSqrtK3y) {
+    SetupMathieson(sqrtK3x, sqrtK3y, sqrtK3x, sqrtK3y);
+    lastSqrtK3x = sqrtK3x;
+    lastSqrtK3y = sqrtK3y;
+  }
 
   const o2::mch::Response response[] = { { o2::mch::Station::Type1 }, { o2::mch::Station::Type2345 } };
 
@@ -59,10 +71,10 @@ double ADCFit(const Digit digit, std::vector<double> parameters)
   return qPad * (segmentation.isBendingPad(padid) ? parameters[4] : parameters[5]);
 }
 //_________________________________________________________________________________________________
-// create the THnSparse (9 axes) to extract the resolution in the residuals later
+// create the THnSparse (10 axes) to extract the resolution in the residuals later
 THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 {
-  const Int_t nDim = 9;
+  const Int_t nDim = 10;
 
   Int_t nbins[nDim] = {
     1000,  // pvalue
@@ -73,7 +85,8 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
     301,   // nSamples
     280,   // Asymm
     3,     // Wire
-    2      // Cathode
+    2,     // Cathode
+    500    // fraction
   };
 
   Double_t xmin[nDim] = {
@@ -85,7 +98,8 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
     -0.5,   // nSamples
     -0.7,   // Asymm
     -0.5,   // Wire
-    -2      // NonBending
+    -2,     // NonBending
+    0.      // fraction
   };
 
   Double_t xmax[nDim] = {
@@ -97,17 +111,18 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
     300.5,   // nSamples
     0.7,     // Asymm
     2.5,     // Wire
-    2        // Bending
+    2,       // Bending
+    1.       // fraction
   };
 
   TString name = Form("MultiResolutionPreCluster%s", extension);
-  TString title = "9D Sparse Histograms for Pre-Cluster ";
+  TString title = "10D Sparse Histograms for Pre-Cluster ";
 
   THnSparseD* hSparse = new THnSparseD(name, title, nDim, nbins, xmin, xmax);
 
   const char* axisTitles[nDim] = {
     "pvalue", "residuals", "ADC_fit", "ADC_mes", "ADC_cluster",
-    "nSamples", "Asymm", "Wire", "Cathode"
+    "nSamples", "Asymm", "Wire", "Cathode", "fraction"
   };
 
   for (Int_t i = 0; i < nDim; ++i) {
@@ -117,9 +132,9 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
   return hSparse;
 }
 //_________________________________________________________________________________________________
-// fill THnSparse (9 axes) with the preclusters characteristics
-// the vector "parameters" is a 10 size vector which is defined as :
-// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue}
+// fill THnSparse (10 axes) with the preclusters characteristics
+// the vector "parameters" is a 12 size vector which is defined as :
+// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, chargeB, chargeNB}
 void FillResolutionInfo(const Digit digit, std::vector<double> parameters, THnSparseD* h)
 {
   // pre-parameters is {X, Y, K3x, K3y, Qb_tot, Qnb_tot}
@@ -133,7 +148,7 @@ void FillResolutionInfo(const Digit digit, std::vector<double> parameters, THnSp
     position = 0.;
   } else if (std::abs(parameters[8]) > 0.075) { //"between"
     position = 2.;
-  } else if ((std::abs(parameters[8]) > 0.015) || (std::abs(parameters[8]) < 0.075)) { //"crossover"
+  } else if ((std::abs(parameters[8]) > 0.015) && (std::abs(parameters[8]) < 0.075)) { //"crossover"
     position = 1.;
   }
 
@@ -146,19 +161,20 @@ void FillResolutionInfo(const Digit digit, std::vector<double> parameters, THnSp
   Double_t Wire = position;
   Double_t Bending = (segmentation.isBendingPad(padid) ? 1. : -1.);
   Double_t pvalue = parameters[9];
+  Double_t fraction = (segmentation.isBendingPad(padid) ? digit.getADC() / parameters[10] : digit.getADC() / parameters[11]);
 
-  Double_t values[9] = {
+  Double_t values[10] = {
     pvalue, residuals, ADC_fit, ADC_mes, ADC_cluster,
-    nSamples, Asymm, Wire, Bending
+    nSamples, Asymm, Wire, Bending, fraction
   };
 
   h->Fill(values);
 }
 //_________________________________________________________________________________________________
-// create the THnSparse (8 axis) for k3 studies
+// create the THnSparse (9 axis) for k3 studies
 THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
 {
-  const Int_t nDim = 8;
+  const Int_t nDim = 9;
 
   Int_t nbins[nDim] = {
     1000, // pvalue
@@ -168,7 +184,8 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     51,   // p
     62,   // phi
     280,  // Asymm
-    3     // Wire
+    3,    // Wire
+    500   // fraction
   };
 
   Double_t xmin[nDim] = {
@@ -179,7 +196,8 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     -0.5,  // p
     -15.5, // phi
     -0.7,  // Asymm
-    -0.5   // Wire
+    -0.5,  // Wire
+    0.     // fraction
   };
 
   Double_t xmax[nDim] = {
@@ -190,17 +208,18 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     50.5,  // p
     15.5,  // phi
     0.7,   // Asymm
-    2.5    // Wire
+    2.5,   // Wire
+    1.     // fraction
   };
 
   TString name = Form("MultiK3PreCluster%s", extension);
-  TString title = "10D Sparse Histograms for Pre-Cluster ";
+  TString title = "9D Sparse Histograms for Pre-Cluster ";
 
   THnSparseD* hSparse = new THnSparseD(name, title, nDim, nbins, xmin, xmax);
 
   const char* axisTitles[nDim] = {
     "pvalue", "k3x", "k3y", "ADC_cluster", "p", "phi",
-    "Asymm", "Wire"
+    "Asymm", "Wire", "fraction"
   };
 
   for (Int_t i = 0; i < nDim; ++i) {
@@ -210,19 +229,22 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
   return hSparse;
 }
 //_________________________________________________________________________________________________
-// fill THnSparse (8 axis) for k3 studies
+// fill THnSparse (9 axis) for k3 studies
 // the vector parameters is a 12 size vector which is defined as :
-// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, track angle, track momentum}
-void FillK3Info(std::vector<double> parameters, THnSparseD* h)
+// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, track angle, track momentum, fraction pad}
+void FillK3Info(const Digit digit, std::vector<double> parameters, THnSparseD* h)
 {
   Double_t position = -1.;
   if ((std::abs(parameters[8]) < 0.015)) { //"top"
     position = 0.;
   } else if (std::abs(parameters[8]) > 0.075) { //"between"
     position = 2.;
-  } else if ((std::abs(parameters[8]) > 0.015) || (std::abs(parameters[8]) < 0.075)) { //"crossover"
+  } else if ((std::abs(parameters[8]) > 0.015) && (std::abs(parameters[8]) < 0.075)) { //"crossover"
     position = 1.;
   }
+
+  const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
+  auto padid = digit.getPadID();
 
   Double_t ADC_cluster = parameters[6];
   Double_t Asymm = parameters[7];
@@ -232,8 +254,9 @@ void FillK3Info(std::vector<double> parameters, THnSparseD* h)
   Double_t k3y = parameters[3];
   Double_t phi = parameters[10];
   Double_t p = parameters[11];
+  Double_t fraction = (segmentation.isBendingPad(padid) ? digit.getADC() / parameters[4] : digit.getADC() / parameters[5]);
 
-  Double_t values[8] = {
+  Double_t values[9] = {
     pvalue,
     k3x,
     k3y,
@@ -242,6 +265,7 @@ void FillK3Info(std::vector<double> parameters, THnSparseD* h)
     phi,
     Asymm,
     Wire,
+    fraction,
   };
 
   h->Fill(values);
@@ -325,28 +349,30 @@ void Resolution(TList*& list, TH2D* hist2D, int statistics, bool auto_bin)
     double min = -1.8 * initial_sigma;
     double max = 1.8 * initial_sigma;
 
-    // method of extraction
     TF1* fit = new TF1("fit", "gaus", min, max);
     fit->SetParameter(0, projY->GetMaximum());
     fit->SetParameter(1, 0.0);
     fit->SetParameter(2, 0.5 * initial_sigma);
+    fit->SetParLimits(1, min, max);
     projY->Fit(fit, "RQ");
 
-    double sigma1 = fit->GetParameter(2);
+    double sigma1 = std::abs(fit->GetParameter(2));
     double mean1 = fit->GetParameter(1);
 
     //---------- SECOND FIT ----------
     double range2 = 1.5 * sigma1;
     fit->SetRange(mean1 - range2, mean1 + range2);
+    fit->SetParLimits(1, mean1 - range2, mean1 + range2);
     fit->SetParameters(fit->GetParameter(0), mean1, sigma1);
     projY->Fit(fit, "RQ");
 
-    double sigma2 = fit->GetParameter(2);
+    double sigma2 = std::abs(fit->GetParameter(2));
     double mean2 = fit->GetParameter(1);
 
     //---------- THIRD FIT ----------
     double range3 = 1.5 * sigma2;
     fit->SetRange(mean2 - range3, mean2 + range3);
+    fit->SetParLimits(1, mean2 - range3, mean2 + range3);
     fit->SetParameters(fit->GetParameter(0), mean2, sigma2);
     projY->Fit(fit, "RQ");
 

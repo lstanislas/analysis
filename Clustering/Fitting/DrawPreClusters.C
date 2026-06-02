@@ -51,7 +51,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
   auto [dataFileIn, dataReader] = LoadData(inFile, "data");
   TTreeReaderValue<TrackParamStruct> trackParam(*dataReader, "trackParameters");
-  TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
+  // TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
   TTreeReaderValue<Cluster> cluster(*dataReader, "clusters");
   TTreeReaderValue<std::vector<Digit>> digits(*dataReader, "digits");
   std::unique_ptr<TTreeReaderArray<double>> fitParameters{};
@@ -65,17 +65,17 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
   std::vector<TH1*> preClusterInfo{};
   CreatePreClusterInfo(preClusterInfo);
-  std::vector<TH1*> preClusterInfoSt[3] = {{}, {}, {}};
+  std::vector<TH1*> preClusterInfoSt[3] = { {}, {}, {} };
   CreatePreClusterInfo(preClusterInfoSt[0], "St1");
   CreatePreClusterInfo(preClusterInfoSt[1], "St2");
   CreatePreClusterInfo(preClusterInfoSt[2], "St345");
 
-  std::vector<TH1*> preClusterInfoVsWireSt[3] = {{}, {}, {}};
+  std::vector<TH1*> preClusterInfoVsWireSt[3] = { {}, {}, {} };
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[0], "St1");
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[1], "St2");
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[2], "St345");
 
-  TH3* hPreClusterInfo3D[4] = {nullptr, nullptr, nullptr, nullptr};
+  TH3* hPreClusterInfo3D[4] = { nullptr, nullptr, nullptr, nullptr };
   hPreClusterInfo3D[0] = CreatePreClusterInfo3D("St1");
   hPreClusterInfo3D[1] = CreatePreClusterInfo3D("St2");
   hPreClusterInfo3D[2] = CreatePreClusterInfo3D("St345");
@@ -85,7 +85,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
   CreateDigitTimeInfo(digitTimeInfo);
   std::vector<TH1*> digitChargeInfo{};
   CreateDigitChargeInfo(digitChargeInfo);
-  std::vector<TH1*> digitChargeInfoSt[3] = {{}, {}, {}};
+  std::vector<TH1*> digitChargeInfoSt[3] = { {}, {}, {} };
   CreateDigitChargeInfo(digitChargeInfoSt[0], "St1");
   CreateDigitChargeInfo(digitChargeInfoSt[1], "St2");
   CreateDigitChargeInfo(digitChargeInfoSt[2], "St345");
@@ -114,16 +114,16 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
     // cut on digit time
     std::vector<Digit> selectedDigits(*digits);
-    if (applyTimeSelection) {
-      selectedDigits.erase(
-        std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
-          return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
-        }),
-        selectedDigits.end());
-      if (selectedDigits.empty()) {
-        continue;
-      }
-    }
+    // if (applyTimeSelection) {
+    //   selectedDigits.erase(
+    //     std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
+    //       return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
+    //     }),
+    //     selectedDigits.end());
+    //   if (selectedDigits.empty()) {
+    //     continue;
+    //   }
+    // }
 
     // reject mono-cathode clusters after digit selection
     const auto [sizeX, sizeY] = GetSize(selectedDigits);
@@ -231,7 +231,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
       // if (!(&digit == digitMaxB || &digit == digitMaxNB)) {
       //   continue;
       // }
-      FillDigitTimeInfo(digit, *trackTime, digitTimeInfo);
+      // FillDigitTimeInfo(digit, *trackTime, digitTimeInfo);
       FillDigitChargeInfo(digit, digitChargeInfo, chargeAsymm, run < 300000);
       FillDigitChargeInfo(digit, digitChargeInfoSt[iSt], chargeAsymm, run < 300000);
     }

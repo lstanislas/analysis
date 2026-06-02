@@ -29,24 +29,25 @@
 // 3rd type : plots of the mean (the one from the fit of the std extraction) vs ADCfit for DATA and TMC
 // 4th type : plots of the reduced chi2 (the one from the fit of the std extraction) vs ADCfit for DATA and TMC
 // 5th type : 3 (station) x 2 (cathode) plots of the residuals distribution for different ADCfit binning range
-void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.root", const std::string& file2 = "tmc_projection_sparse.root", const std::string& outFile = "resolution_ratio.root")
+// sparseTypes =  "Fit" , "Noise" or "Total"
+// noise : "" (default) = sADC with alpha=1 ; "sADC_XpX" = alpha*sqrt(ADC) ; "MC_XpX" = 0.5*(sqrt(nSamples)+XpX) ; "MULT_XpX_XpX_XpX" = XpX*sqrt(ADC) + XpX*ADC + XpX*ADC*sqrt(ADC)
+
+void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.root", const std::string& file2 = "tmc_projection_sparse.root", const std::string& outFile = "resolution_ratio.root", const std::string& sparseType1 = "Fit", const std::string& sparseType2 = "Fit", const std::string& noise = "")
 {
-  auto extractGraphsAndHistos = [](TFile& f, std::vector<TGraphAsymmErrors*>& graphs, std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, std::vector<TH1D*>& histograms) {
+  static const std::string sStation_[3] = { "St1", "St2", "St345" };
+  static const std::string sCathode_[2] = { "Bend", "NBend" };
+
+  auto extractGraphsAndHistos = [](TFile& f, const std::string& sparseType, std::vector<TGraphAsymmErrors*>& graphs, std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, std::vector<TH1D*>& histograms) {
     static const std::vector<std::pair<int, int>> chargeLimits{
       { 20, 40 }, { 40, 60 }, { 60, 80 }, { 80, 120 }, { 120, 200 }, { 200, 400 }, { 400, 700 }, { 700, 1000 } // ADCfit binning range for the 5th type
     };
     // loop (St.1, St.2, St.345) x (B, NB)
     for (int i = 0; i < 6; ++i) {
 
-      TKey* key = dynamic_cast<TKey*>(f.GetListOfKeys()->At(i));
-      if (!key) {
-        Warning("LoadTLists", "Entry %d is not a TKey!", i);
-        continue;
-      }
-
-      TList* list = dynamic_cast<TList*>(key->ReadObj());
+      auto lName = fmt::format("Residual_{}_{}_{}", sparseType, sStation_[i / 2], sCathode_[i % 2]);
+      TList* list = dynamic_cast<TList*>(f.Get(lName.c_str()));
       if (!list) {
-        Warning("LoadTLists", "Object '%s' is not a TList!", key->GetName());
+        Warning("LoadTLists", "TList '%s' not found in file!", lName.c_str());
         continue;
       }
 
@@ -76,12 +77,12 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
         std::vector<std::string> tokens;
 
         while (std::getline(ss, token, '_')) // read the name of the elements from the TList which contain
-          tokens.push_back(token);           // the charge interval in the name, e.g. "projY_h2D_Station_Cathode_ADCmin_ADCmax"
-        if (tokens.size() < 6)
+          tokens.push_back(token);           // the charge interval in the name, e.g. "projY_h2D_Label_Station_Cathode_ADCmin_ADCmax"
+        if (tokens.size() < 7)
           continue;
 
-        double X = std::stod(tokens[4]); // lower ADC range
-        double Y = std::stod(tokens[5]); // higher ADC range
+        double X = std::stod(tokens[5]); // lower ADC range
+        double Y = std::stod(tokens[6]); // higher ADC range
 
         double avg = 0.5 * (X + Y);          // mean of the ADC range
         double dx = std::abs(X - avg) + 0.5; // lower bin edge length
@@ -124,8 +125,8 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
   std::vector<TGraph*> mean1, mean2, Rchi2_1, Rchi2_2;
   std::vector<TH1D*> h1, h2;
 
-  extractGraphsAndHistos(f1, g1, mean1, Rchi2_1, h1);
-  extractGraphsAndHistos(f2, g2, mean2, Rchi2_2, h2);
+  extractGraphsAndHistos(f1, sparseType1, g1, mean1, Rchi2_1, h1);
+  extractGraphsAndHistos(f2, sparseType2, g2, mean2, Rchi2_2, h2);
 
   // name, color, title, range, ...
   for (int i = 0; i < 6; i++) {
@@ -141,8 +142,8 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
     FillInfoGraph(Rchi2_2[i], "ADC fit", "#chi^{2}/ndf", sStation[i / 2], cathode, false);
 
     for (int j = 0; j < 8; j++) {
-      FillInfoHist(h1[j + 8 * i], "ADC fit", "#sigma", sStation[i / 2], cathode, true);
-      FillInfoHist(h2[j + 8 * i], "ADC fit", "#sigma", sStation[i / 2], cathode, false);
+      FillInfoHist(h1[j + 8 * i], "Residuals", "Counts", sStation[i / 2], cathode, true);
+      FillInfoHist(h2[j + 8 * i], "Residuals", "Counts", sStation[i / 2], cathode, false);
     }
   }
 
@@ -150,11 +151,11 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
     std::cout << "Creating plots for " << sStation[i] << "..." << std::endl;
     // plot Resolution vs ADC from fitted pad
     auto gName = fmt::format("g_sigmaADC_{}", sStation[i]);
-    tGraphErrAsymm(g1, g2, gName, i);
+    tGraphErrAsymm(g1, g2, gName, i, noise);
 
     // plot Ratio
     auto rName = fmt::format("r_Ratio_{}", sStation[i]);
-    tRatio(g1, g2, rName, i, "1.0"); // last argument = alpha; (e.g. alpha*sqrt(ADC))
+    tRatio(g1, g2, rName, i, noise);
 
     // scattered plot extracted mean vs ADC from fitted pad
     auto mName = fmt::format("m_MeanADC_{}", sStation[i]);

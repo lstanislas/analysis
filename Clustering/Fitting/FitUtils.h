@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -32,11 +33,11 @@ std::function<double(double, double, double)> MathiesonIntegrate(bool fixK3, dou
 
   if (fixK3) {
     auto [sqrtK3, k2, k4] = init(k3);
-    return [sqrtK3, k2, k4, &integrate](double min, double max, double) -> double {
+    return [sqrtK3, k2, k4, integrate](double min, double max, double) -> double {
       return integrate(min, max, sqrtK3, k2, k4);
     };
   } else {
-    return [&init, &integrate](double min, double max, double k3) -> double {
+    return [init, integrate](double min, double max, double k3) -> double {
       auto [sqrtK3, k2, k4] = init(k3);
       return integrate(min, max, sqrtK3, k2, k4);
     };
@@ -57,6 +58,23 @@ std::function<double(double, double, double)> Error(std::string mode, double alp
   } else if (mode == "MC") {
     return [alpha](double, double sample, double) -> double {
       return 0.5 * (std::sqrt(sample) + alpha);
+    };
+  } else if (mode.starts_with("MULT_")) {
+    auto params = mode.substr(5);
+    std::replace(params.begin(), params.end(), 'p', '.');
+    double a = 1.0, b = 0., g = 0.;
+    size_t pos1 = params.find('_');
+    size_t pos2 = (pos1 == std::string::npos) ? std::string::npos : params.find('_', pos1 + 1);
+    if (pos1 != std::string::npos && pos2 != std::string::npos) {
+      try {
+        a = std::stod(params.substr(0, pos1));
+        b = std::stod(params.substr(pos1 + 1, pos2 - pos1 - 1));
+        g = std::stod(params.substr(pos2 + 1));
+      } catch (...) {}
+    }
+    return [a, b, g](double adc, double, double) -> double {
+      const double sqrtQ = std::sqrt(adc);
+      return a * sqrtQ + b * adc + g * adc * sqrtQ;
     };
   } else {
     return [alpha](double, double, double) -> double {
@@ -130,10 +148,10 @@ ROOT::Fit::FitResult Fit(const std::vector<Digit>& digits, const std::array<doub
   fitter.Config().ParSettings(1).SetName("y");
   fitter.Config().ParSettings(1).SetStepSize(0.05);
   fitter.Config().ParSettings(2).SetName("kx");
-  fitter.Config().ParSettings(2).SetLimits(0., 1.);
+  fitter.Config().ParSettings(2).SetLimits(0.005, 1.);
   fitter.Config().ParSettings(2).SetStepSize(0.01);
   fitter.Config().ParSettings(3).SetName("ky");
-  fitter.Config().ParSettings(3).SetLimits(0., 1.);
+  fitter.Config().ParSettings(3).SetLimits(0.005, 1.);
   fitter.Config().ParSettings(3).SetStepSize(0.01);
   fitter.Config().ParSettings(4).SetName(fitAsymm ? "Qt_b" : "Qt");
   fitter.Config().ParSettings(4).SetStepSize(0.1);

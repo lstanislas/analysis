@@ -12,6 +12,7 @@
 #include <TTreeReader.h>
 #include <TTreeReaderValue.h>
 #include <TTreeReaderArray.h>
+#include <TSystem.h>
 #include "CommonUtils/ConfigurableParam.h"
 #include "DataFormatsMCH/Cluster.h"
 #include "DataFormatsMCH/Digit.h"
@@ -29,7 +30,6 @@ using o2::mch::Digit;
 using o2::mch::TrackParamStruct;
 
 static constexpr double pi = 3.14159265358979323846;
-
 //_________________________________________________________________________________________________
 void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double sqrtk3x_2345, const double sqrtk3y_2345)
 {
@@ -44,7 +44,6 @@ void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double
   o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKx3St2345", K3X_2345);
   o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKy3St2345", K3Y_2345);
 }
-
 //_________________________________________________________________________________________________
 // run : run number
 // inFile : root data file
@@ -54,9 +53,8 @@ void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double
 // in XpX, p mean point (e.g. 2p34 == 2.34 , 0p4 == 0.4), useful for writting file name
 
 // asymm : "none" = no asymmetry ; "copy" = copy the asymmetry from the data or from the fit; "gaus_XpX" = default asymm function in MC * XpX; "tripleGaus" = triple gaussians
-// noise : "none" = no noise ; "MC_XpX" = gaussian noise with sigma = 0.5 * (sqrt(nSamples) + XpX) ; "sADC_XpX" = gaussian noise with sigma = XpX * sqrt(ADC)
+// noise : "none" = no noise ; "MC_XpX" = gaussian noise with sigma = 0.5 * (sqrt(nSamples) + XpX) ; "MULT_XpX_XpX_XpX" = gaussian noise with sigma = XpX * sqrt(ADC) + XpX * ADC + XpX * sqrt(ADC) * ADC ; "predefined" = tuning per-station and cathode
 // threshold : "none" = no threshold ; "gaus" = gaussian threshold ; "uniform" = static threshold
-// k3x and k3y : change K3 values if positive
 // try_tmc : redo ToyMC if the cluster isnt in the correct subspace (default = 50)
 //_________________________________________________________________________________________________
 
@@ -64,7 +62,7 @@ void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double
 /// require the MCH mapping to be loaded: gSystem->Load("libO2MCHGeometryTransformer"),  gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
 
 void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
-                std::string asymm, std::string noise, std::string threshold, 
+                std::string asymm, std::string noise, std::string threshold,
                 double k3x = -1., double k3y = -1., int try_tmc = 50)
 {
 
@@ -88,8 +86,8 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     exit(-1);
   }
 
-  if (noise != "none" && !noise.starts_with("MC_") && !noise.starts_with("sADC_") && !noise.starts_with("RATIO_")) {
-    LOGP(error, "unknown noise mode. Must be \"none\", \"MC_XpX\" or \"sADC_XpX\" or \"RATIO_XpX\"");
+  if (noise != "none" && !noise.starts_with("MC_") && !noise.starts_with("MULT_") && noise != "predefined") {
+    LOGP(error, "unknown noise mode. Must be \"none\", \"MC_XpX\", \"MULT_XpX_XpX_XpX\" or \"predefined\"");
     exit(-1);
   }
 
@@ -117,7 +115,12 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
   }
 
   // setup the output
-  auto outFile = fmt::format("tmc_run_{}_{}_{}_{}_{}_{}.root", run, mode, fit, asymm, noise, threshold);
+  auto outFile = fmt::format("production/tmc/tmc_{}_{}_{}_{}_{}_{}_{}_{}.root", run, k3x, k3y, mode, fit, asymm, noise, threshold);
+
+  // Create the output directory if it doesn't exist
+  std::string outDir = "production/tmc";
+  gSystem->MakeDirectory(outDir.c_str());
+
   TFile dataFileOut(outFile.c_str(), "recreate");
   TTree* dataTreeOut = new TTree("data", "tree tmc data");
   TrackParamStruct etrackParam;
@@ -135,6 +138,8 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
   int iCluster = 0;
   int selected = 0;
   int discarded = 0;
+  int totalTries = 0;
+  int retriedClusters = 0;
   auto tStart = std::chrono::high_resolution_clock::now();
 
   while (dataReader->Next()) {
@@ -157,9 +162,7 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     // cut on digit time
     std::vector<Digit> selectedDigits(*digits);
     selectedDigits.erase(
-      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
-        return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
-      }),
+      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) { return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.; }),
       selectedDigits.end());
     if (selectedDigits.empty()) {
       continue;
@@ -178,6 +181,7 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     // cut on precluster charge asymmetry
     auto [chargeNB, chargeB] = GetCharge(selectedDigits, run < 300000);
     double chargeAsymm = (chargeNB - chargeB) / (chargeNB + chargeB);
+
     if (std::abs(chargeAsymm) > 0.5) {
       continue;
     }
@@ -187,6 +191,7 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       continue;
     }
 
+    int iSt = (cluster->getChamberId() < 4) ? cluster->getChamberId() / 2 : 2;
     ++selected;
 
     //___________________INIT PARAMETERS___________________________
@@ -196,6 +201,11 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       }
     } else {
       auto local = GlobalToLocal(cluster->getDEId(), cluster->x, cluster->y, cluster->z, run < 300000);
+      // add charge fraction correction if no use of fit
+      auto [chargeFracNB, chargeFracB] = GetChargeFraction(selectedDigits, local.x(), local.y());
+      chargeNB /= chargeFracNB;
+      chargeB /= chargeFracB;
+
       parameters[0] = local.x(); // X
       parameters[1] = local.y(); // Y
       parameters[2] = 0.3;       // K3X
@@ -204,18 +214,31 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       parameters[5] = chargeNB;  // Qnb_tot
     }
 
-    if(k3x > 0.) {
+    if (k3x > 0.) {
       parameters[2] = k3x;
     }
-    if(k3y > 0.) {
+    if (k3y > 0.) {
       parameters[3] = k3y;
     }
-    
-    //setup the mathieson
+
+    // set K3X and K3Y for the predefined noise since the study was done with these values
+    if (noise == "predefined") {
+      if (iSt == 0) {
+        parameters[2] = 0.3;
+        parameters[3] = 0.32;
+      } else if (iSt == 1) {
+        parameters[2] = 0.46;
+        parameters[3] = 0.43;
+      } else if (iSt == 2) {
+        parameters[2] = 0.35;
+        parameters[3] = 0.33;
+      }
+    }
+    // setup the mathieson
     auto sqrtK3x = sqrt(parameters[2]);
     auto sqrtK3y = sqrt(parameters[3]);
     SetupMathieson(sqrtK3x, sqrtK3y, sqrtK3x, sqrtK3y);
-  
+
     //___________________RUN MC___________________________
     if (mode == "full") {
 
@@ -225,7 +248,6 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
         ++discarded;
         continue;
       }
-
     } else {
 
       int tries = 0;
@@ -237,6 +259,10 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       if (!IsFittable(edigits)) {
         ++discarded;
         continue;
+      }
+      totalTries += tries;
+      if (tries > 1) {
+        ++retriedClusters;
       }
     }
 
@@ -253,6 +279,12 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
   cout << "\r\033[Kprocessing completed. Duration = " << timer.count() << " s" << endl;
   cout << "selected clusters = " << selected << " / " << nClusters << endl;
   cout << "discarded clusters : " << discarded << " / " << selected << endl;
+  if (mode == "cut") {
+    int accepted = selected - discarded;
+    cout << "clusters needing at least 1 retry : " << retriedClusters << " / " << accepted
+         << fmt::format(" ({:.1f}%)", 100. * retriedClusters / accepted) << endl;
+    cout << fmt::format("average TMC attempts per accepted cluster : {:.2f}", static_cast<double>(totalTries) / accepted) << endl;
+  }
   dataFileOut.Write("", TObject::kOverwrite);
   dataFileOut.Close();
   dataFileIn->Close();
