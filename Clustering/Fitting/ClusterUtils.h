@@ -68,7 +68,6 @@ o2::math_utils::Point3D<float> LocalToGlobal(int de, float x, float y, float z, 
 
   o2::math_utils::Point3D<float> local{x, y, z};
   return transformation(de)(local);
-
 }
 //_________________________________________________________________________________________________
 float DistanceToClosestWire(int de, float x)

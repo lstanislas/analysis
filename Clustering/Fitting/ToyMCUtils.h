@@ -19,11 +19,12 @@ using o2::mch::Response;
 std::mt19937 mRandom{std::random_device{}()};
 
 //_________________________________________________________________________________________________
-void ConfiguredNoise(double& charge, int iSt, bool isBending){
+void ConfiguredNoise(double& charge, int iSt, bool isBending)
+{
 
   // tuning per-station and cathode
   static constexpr std::array<std::array<double, 2>, 3> alpha = {{{1.3, 1.3}, {0.79, 0.82}, {0.77, 0.93}}};
-  static constexpr std::array<std::array<double, 2>, 3> beta  = {{{-0.085, -0.095}, {0.0058, 0.012}, {-0.034, -0.068}}};
+  static constexpr std::array<std::array<double, 2>, 3> beta = {{{-0.085, -0.095}, {0.0058, 0.012}, {-0.034, -0.068}}};
   static constexpr std::array<std::array<double, 2>, 3> gamma = {{{0.0048, 0.005}, {0.0067, 0.0071}, {0.004, 0.006}}};
 
   static std::normal_distribution mNoise{0., 1.};
@@ -171,4 +172,3 @@ void TMC(std::vector<Digit>& digits, int32_t time, int deId, std::array<double, 
     }
   });
 }
-

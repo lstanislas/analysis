@@ -34,12 +34,12 @@
 
 void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.root", const std::string& file2 = "tmc_projection_sparse.root", const std::string& outFile = "resolution_ratio.root", const std::string& sparseType1 = "Fit", const std::string& sparseType2 = "Fit", const std::string& noise = "")
 {
-  static const std::string sStation_[3] = { "St1", "St2", "St345" };
-  static const std::string sCathode_[2] = { "Bend", "NBend" };
+  static const std::string sStation_[3] = {"St1", "St2", "St345"};
+  static const std::string sCathode_[2] = {"Bend", "NBend"};
 
   auto extractGraphsAndHistos = [](TFile& f, const std::string& sparseType, std::vector<TGraphAsymmErrors*>& graphs, std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, std::vector<TH1D*>& histograms) {
     static const std::vector<std::pair<int, int>> chargeLimits{
-      { 20, 40 }, { 40, 60 }, { 60, 80 }, { 80, 120 }, { 120, 200 }, { 200, 400 }, { 400, 700 }, { 700, 1000 } // ADCfit binning range for the 5th type
+      {20, 40}, {40, 60}, {60, 80}, {80, 120}, {120, 200}, {200, 400}, {400, 700}, {700, 1000} // ADCfit binning range for the 5th type
     };
     // loop (St.1, St.2, St.345) x (B, NB)
     for (int i = 0; i < 6; ++i) {
@@ -119,7 +119,7 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
   TFile f2(file2.c_str(), "read");
   TFile fout(outFile.c_str(), "recreate");
 
-  std::string sStation[3] = { "St1", "St2", "St345" };
+  std::string sStation[3] = {"St1", "St2", "St345"};
 
   std::vector<TGraphAsymmErrors*> g1, g2;
   std::vector<TGraph*> mean1, mean2, Rchi2_1, Rchi2_2;

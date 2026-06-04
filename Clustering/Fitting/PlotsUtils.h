@@ -32,7 +32,7 @@ void LoadHist()
   DelHist(); // clear any previous histograms from a prior run in the same ROOT session
 
   // station index
-  int station[3] = { 1, 2, 345 };
+  int station[3] = {1, 2, 345};
 
   // chi2 vs ndf
   for (int i = 0; i < 3; ++i) {
@@ -173,7 +173,7 @@ TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., double beta =
                               double result = (std::pow(charge / par[1], 1. / par[2]) + par[0]);
                               return (0.5 * (sqrt(std::round(result)) + par[4])); }, 0, 10000, 4);
       }
-      double signalParam[3] = { 14., 13., 1.5 };
+      double signalParam[3] = {14., 13., 1.5};
       Func->SetParameters(signalParam[0], signalParam[1], signalParam[2], alpha);
       Func->SetLineColor(4);
       Func->SetLineWidth(3);
@@ -187,7 +187,7 @@ TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., double beta =
                             return sqrt(0.25 * (std::round(result) + par[3]) + 0.25 * charge * charge * (TMath::Exp(8 * par[4] * par[4]) - TMath::Exp(4 * par[4] * par[4]))); }, 0, 10000, 5);
       }
       double sigmaAsymm = gamma * 0.055;
-      double signalParam[3] = { 14., 13., 1.5 };
+      double signalParam[3] = {14., 13., 1.5};
       Func->SetParameters(signalParam[0], signalParam[1], signalParam[2], alpha, sigmaAsymm);
       Func->SetLineColor(4);
       Func->SetLineWidth(3);
@@ -256,7 +256,10 @@ void plotSAME(std::vector<TH1D*> hist, const char* name, const char* title, bool
   c->Divide(COL, (N / 2 + COL - 1) / COL);
   for (int i = 1; i < (N / 2 + 1); ++i) {
     TVirtualPad* pad = c->cd(i);
-    if (!pad) { std::cerr << "plotSAME: cd(" << i << ") returned null\n"; continue; }
+    if (!pad) {
+      std::cerr << "plotSAME: cd(" << i << ") returned null\n";
+      continue;
+    }
     pad->SetLogy();
     hist[2 * (i - 1)]->SetLineColor(2);
     hist[2 * (i - 1)]->Draw("HIST");
@@ -280,7 +283,10 @@ void plot1D(std::vector<TH1D*> hist, const char* name, const char* title, bool a
   c->Divide(COL, (N + COL - 1) / COL);
   for (int i = 1; i < N + 1; ++i) {
     TVirtualPad* pad = c->cd(i);
-    if (!pad) { std::cerr << "plot1D: cd(" << i << ") returned null\n"; continue; }
+    if (!pad) {
+      std::cerr << "plot1D: cd(" << i << ") returned null\n";
+      continue;
+    }
     pad->SetLogy();
     hist[i - 1]->Draw("HIST");
   }
@@ -302,7 +308,10 @@ void plot2D(std::vector<TH2D*> hist, const char* name, const char* title, bool a
   c->Divide(COL, (N + COL - 1) / COL);
   for (int i = 1; i < N + 1; ++i) {
     TVirtualPad* pad = c->cd(i);
-    if (!pad) { std::cerr << "plot2D: cd(" << i << ") returned null\n"; continue; }
+    if (!pad) {
+      std::cerr << "plot2D: cd(" << i << ") returned null\n";
+      continue;
+    }
     pad->SetLogz();
     gStyle->SetPalette(kRainBow);
     hist[i - 1]->Draw("COLZ");
@@ -325,7 +334,11 @@ TF1* noiseFromString(const std::string& noise)
     if (next != std::string::npos)
       tok = tok.substr(0, next);
     std::replace(tok.begin(), tok.end(), 'p', '.');
-    try { return std::stod(tok); } catch (...) { return 1.0; }
+    try {
+      return std::stod(tok);
+    } catch (...) {
+      return 1.0;
+    }
   };
 
   if (noise.find("MULT_") != std::string::npos) {
@@ -337,9 +350,10 @@ TF1* noiseFromString(const std::string& noise)
     if (p1 != std::string::npos && p2 != std::string::npos) {
       try {
         alpha = std::stod(s.substr(0, p1));
-        beta  = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
+        beta = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
         gamma = std::stod(s.substr(p2 + 1)); // rest of string, no trailing '_' needed
-      } catch (...) {}
+      } catch (...) {
+      }
     }
     return plotNoise("MULT", alpha, gamma, beta);
   } else if (noise.find("sADC_") != std::string::npos) {
@@ -393,8 +407,7 @@ void tGraph(std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, const 
 
   TGraph* plots[4] = {
     graphs1[2 * station], graphs2[2 * station],
-    graphs1[2 * station + 1], graphs2[2 * station + 1]
-  };
+    graphs1[2 * station + 1], graphs2[2 * station + 1]};
 
   for (int i = 0; i < 4; ++i) {
     c->cd(i + 1);
@@ -457,12 +470,18 @@ void tRatio(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErr
   // parse noise model string (same format as BuildToyMC: "MULT_XpX_XpX_XpX", "sADC_XpX", "MC_XpX")
   auto extractOne = [](const std::string& s, const std::string& pat) -> double {
     size_t pos = s.find(pat);
-    if (pos == std::string::npos) return 1.0;
+    if (pos == std::string::npos)
+      return 1.0;
     std::string tok = s.substr(pos + pat.size());
     size_t next = tok.find('_');
-    if (next != std::string::npos) tok = tok.substr(0, next);
+    if (next != std::string::npos)
+      tok = tok.substr(0, next);
     std::replace(tok.begin(), tok.end(), 'p', '.');
-    try { return std::stod(tok); } catch (...) { return 1.0; }
+    try {
+      return std::stod(tok);
+    } catch (...) {
+      return 1.0;
+    }
   };
 
   TF1* func = noiseFromString(noise);
@@ -477,9 +496,10 @@ void tRatio(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErr
     if (p1 != std::string::npos && p2 != std::string::npos) {
       try {
         alpha = std::stod(s.substr(0, p1));
-        beta  = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
+        beta = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
         gamma = std::stod(s.substr(p2 + 1)); // rest of string, no trailing '_' needed
-      } catch (...) {}
+      } catch (...) {
+      }
     }
     lambda = [alpha, beta, gamma](double charge) {
       return alpha * std::sqrt(charge) + beta * charge + gamma * charge * std::sqrt(charge);

@@ -96,8 +96,8 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
   hPreClusterInfoMULTI[1] = CreatePreClusterInfoMULTI("St2");
   hPreClusterInfoMULTI[2] = CreatePreClusterInfoMULTI("St345");
   // ToyMC only : sigma_noise (Qb_true/Qnb_true reference) and sigma_total = sqrt(sigma_noise^2 + sigma_Y^2) (Q_tot reference)
-  THnSparseD* hPreClusterInfoNoise[3] = { nullptr, nullptr, nullptr };
-  THnSparseD* hPreClusterInfoTotal[3] = { nullptr, nullptr, nullptr };
+  THnSparseD* hPreClusterInfoNoise[3] = {nullptr, nullptr, nullptr};
+  THnSparseD* hPreClusterInfoTotal[3] = {nullptr, nullptr, nullptr};
   if (isTMC) {
     hPreClusterInfoNoise[0] = CreatePreClusterInfoMULTI("NoiseSt1");
     hPreClusterInfoNoise[1] = CreatePreClusterInfoMULTI("NoiseSt2");
@@ -107,8 +107,8 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
     hPreClusterInfoTotal[2] = CreatePreClusterInfoMULTI("TotalSt345");
   }
 
-  static const char* sStationNames[3] = { "St1", "St2", "St345" };
-  TH2D* h2ADCtrueVsADCfit[3] = { nullptr, nullptr, nullptr };
+  static const char* sStationNames[3] = {"St1", "St2", "St345"};
+  TH2D* h2ADCtrueVsADCfit[3] = {nullptr, nullptr, nullptr};
   if (isTMC) {
     for (int i = 0; i < 3; ++i) {
       auto hName = fmt::format("h2ADCtrueVsADCfit_{}", sStationNames[i]);
@@ -336,8 +336,7 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
   std::vector<std::string> canvasNames = {
     "c_chi2_ndf",
     "c_prob",
-    "c_asymm"
-  };
+    "c_asymm"};
   for (const auto& name : canvasNames) {
     if (TCanvas* c = (TCanvas*)gROOT->FindObject(name.c_str())) {
       c->Write();

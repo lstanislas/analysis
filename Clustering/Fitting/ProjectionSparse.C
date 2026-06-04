@@ -27,13 +27,13 @@
 void ProjectionSparse(
   const std::string& inFile = "residuals_sparse.root",
   const std::string& outFile = "projection_sparse.root",
-  const bool auto_bin = true,                   // adjust bin in the resolution extraction
-  const std::pair<int, int>& projYX = { 1, 2 }, // default is Residual vs ADC from fitted pad
-  const std::pair<std::optional<double>, std::optional<double>>& asym = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& chargetot = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& pvalue = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& nsamples = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& fraction = { std::nullopt, std::nullopt },
+  const bool auto_bin = true,                 // adjust bin in the resolution extraction
+  const std::pair<int, int>& projYX = {1, 2}, // default is Residual vs ADC from fitted pad
+  const std::pair<std::optional<double>, std::optional<double>>& asym = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& chargetot = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& pvalue = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& nsamples = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& fraction = {std::nullopt, std::nullopt},
   const std::string& wire = "")
 {
   auto warning = [](const std::string& label, const auto& range) {
@@ -64,14 +64,14 @@ void ProjectionSparse(
   // TList created on-the-fly for each (station x cathode x sparse type) found in the file
   std::map<std::string, std::vector<TH2D*>> labelHistos;
   std::vector<TList*> allListResidual;
-  std::string sStation[3] = { "St1", "St2", "St345" };
+  std::string sStation[3] = {"St1", "St2", "St345"};
 
   // sparse types : {THnSparse name prefix, output label}
   // Noise and Total are only present in files produced from ToyMC input (see ResidualsSparse.C)
   const std::vector<std::pair<std::string, std::string>> sparseTypes = {
-    { "MultiResolutionPreCluster",      "Fit" },   // sigma_output (DATA or fitted TMC)
-    { "MultiResolutionPreClusterNoise", "Noise" }, // sigma_noise (ToyMC only, asymm="copy" or "none")
-    { "MultiResolutionPreClusterTotal", "Total" }  // sqrt(sigma_noise^2 + sigma_Y^2) (ToyMC only)
+    {"MultiResolutionPreCluster", "Fit"},        // sigma_output (DATA or fitted TMC)
+    {"MultiResolutionPreClusterNoise", "Noise"}, // sigma_noise (ToyMC only, asymm="copy" or "none")
+    {"MultiResolutionPreClusterTotal", "Total"}  // sqrt(sigma_noise^2 + sigma_Y^2) (ToyMC only)
   };
 
   auto tStart = std::chrono::high_resolution_clock::now();

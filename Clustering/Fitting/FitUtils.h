@@ -70,7 +70,8 @@ std::function<double(double, double, double)> Error(std::string mode, double alp
         a = std::stod(params.substr(0, pos1));
         b = std::stod(params.substr(pos1 + 1, pos2 - pos1 - 1));
         g = std::stod(params.substr(pos2 + 1));
-      } catch (...) {}
+      } catch (...) {
+      }
     }
     return [a, b, g](double adc, double, double) -> double {
       const double sqrtQ = std::sqrt(adc);

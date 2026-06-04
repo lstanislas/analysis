@@ -56,7 +56,7 @@ double ADCFit(const Digit digit, std::vector<double> parameters)
     lastSqrtK3y = sqrtK3y;
   }
 
-  const o2::mch::Response response[] = { { o2::mch::Station::Type1 }, { o2::mch::Station::Type2345 } };
+  const o2::mch::Response response[] = {{o2::mch::Station::Type1}, {o2::mch::Station::Type2345}};
 
   const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
   int iSt = (digit.getDetID() < 300) ? 0 : 1;
@@ -122,8 +122,7 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 
   const char* axisTitles[nDim] = {
     "pvalue", "residuals", "ADC_fit", "ADC_mes", "ADC_cluster",
-    "nSamples", "Asymm", "Wire", "Cathode", "fraction"
-  };
+    "nSamples", "Asymm", "Wire", "Cathode", "fraction"};
 
   for (Int_t i = 0; i < nDim; ++i) {
     hSparse->GetAxis(i)->SetTitle(axisTitles[i]);
@@ -165,8 +164,7 @@ void FillResolutionInfo(const Digit digit, std::vector<double> parameters, THnSp
 
   Double_t values[10] = {
     pvalue, residuals, ADC_fit, ADC_mes, ADC_cluster,
-    nSamples, Asymm, Wire, Bending, fraction
-  };
+    nSamples, Asymm, Wire, Bending, fraction};
 
   h->Fill(values);
 }
@@ -219,8 +217,7 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
 
   const char* axisTitles[nDim] = {
     "pvalue", "k3x", "k3y", "ADC_cluster", "p", "phi",
-    "Asymm", "Wire", "fraction"
-  };
+    "Asymm", "Wire", "fraction"};
 
   for (Int_t i = 0; i < nDim; ++i) {
     hSparse->GetAxis(i)->SetTitle(axisTitles[i]);
@@ -311,19 +308,19 @@ void Resolution(TList*& list, TH2D* hist2D, int statistics, bool auto_bin)
     std::vector<std::pair<int, int>> charge_bin;
 
     for (int i = start; i <= 500; i += 1) {
-      charge_bin.push_back({ i, i });
+      charge_bin.push_back({i, i});
     }
     for (int i = charge_bin.back().second + 1; i <= 1000; i += 4) {
-      charge_bin.push_back({ i, i + 3 });
+      charge_bin.push_back({i, i + 3});
     }
     for (int i = charge_bin.back().second + 1; i <= 2500; i += 10) {
-      charge_bin.push_back({ i, i + 9 });
+      charge_bin.push_back({i, i + 9});
     }
     for (int i = charge_bin.back().second + 1; i <= 5000; i += 16) {
-      charge_bin.push_back({ i, i + 15 });
+      charge_bin.push_back({i, i + 15});
     }
     for (int i = charge_bin.back().second + 1; i <= end - 25; i += 26) {
-      charge_bin.push_back({ i, i + 25 });
+      charge_bin.push_back({i, i + 25});
     }
 
     for (auto interval : charge_bin) {

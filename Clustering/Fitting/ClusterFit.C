@@ -32,7 +32,7 @@ static constexpr double pi = 3.14159265358979323846;
 //_________________________________________________________________________________________________
 void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", double errorAlpha = 1.,
                 double k3x = 0.3, double k3y = 0.3, bool correctCharge = false,
-                std::array<int, 6> fix = { 0, 0, 1, 1, 0, 0 },
+                std::array<int, 6> fix = {0, 0, 1, 1, 0, 0},
                 std::string inFile = "clusters.root", std::string outFile = "newclusters.root",
                 int correctADCfit = 0)
 {
@@ -88,7 +88,7 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
 
   std::vector<TH1*> preClusterInfo{};
   CreatePreClusterInfo(preClusterInfo);
-  std::vector<TH1*> preClusterInfoSt[3] = { {}, {}, {} };
+  std::vector<TH1*> preClusterInfoSt[3] = {{}, {}, {}};
   CreatePreClusterInfo(preClusterInfoSt[0], "St1");
   CreatePreClusterInfo(preClusterInfoSt[1], "St2");
   CreatePreClusterInfo(preClusterInfoSt[2], "St345");
@@ -156,7 +156,7 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
       chargeNB /= chargeFracNB;
       chargeB /= chargeFracB;
     }
-    std::array<double, 6> param = { local.x(), local.y(), k3x, k3y, chargeB, chargeNB };
+    std::array<double, 6> param = {local.x(), local.y(), k3x, k3y, chargeB, chargeNB};
 
     // do the fit
     auto result = Fit(selectedDigits, param, fix, fitAsymm, errorMode, errorAlpha);
@@ -205,7 +205,8 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
     fitParameters[5] = fitAsymm ? result.Parameter(5) : result.Parameter(4);
     newCluster = MakeCluster(cluster->uid, result.Parameter(0), result.Parameter(1));
     if (trueParamsProxy) {
-      for (int i = 0; i < 6; ++i) trueParamsBuffer[i] = (*trueParamsProxy)[i];
+      for (int i = 0; i < 6; ++i)
+        trueParamsBuffer[i] = (*trueParamsProxy)[i];
     }
     dataTreeOut->Fill();
   }

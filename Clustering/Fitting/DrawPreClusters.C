@@ -65,17 +65,17 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
   std::vector<TH1*> preClusterInfo{};
   CreatePreClusterInfo(preClusterInfo);
-  std::vector<TH1*> preClusterInfoSt[3] = { {}, {}, {} };
+  std::vector<TH1*> preClusterInfoSt[3] = {{}, {}, {}};
   CreatePreClusterInfo(preClusterInfoSt[0], "St1");
   CreatePreClusterInfo(preClusterInfoSt[1], "St2");
   CreatePreClusterInfo(preClusterInfoSt[2], "St345");
 
-  std::vector<TH1*> preClusterInfoVsWireSt[3] = { {}, {}, {} };
+  std::vector<TH1*> preClusterInfoVsWireSt[3] = {{}, {}, {}};
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[0], "St1");
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[1], "St2");
   CreatePreClusterInfoVsWire(preClusterInfoVsWireSt[2], "St345");
 
-  TH3* hPreClusterInfo3D[4] = { nullptr, nullptr, nullptr, nullptr };
+  TH3* hPreClusterInfo3D[4] = {nullptr, nullptr, nullptr, nullptr};
   hPreClusterInfo3D[0] = CreatePreClusterInfo3D("St1");
   hPreClusterInfo3D[1] = CreatePreClusterInfo3D("St2");
   hPreClusterInfo3D[2] = CreatePreClusterInfo3D("St345");
@@ -85,7 +85,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
   CreateDigitTimeInfo(digitTimeInfo);
   std::vector<TH1*> digitChargeInfo{};
   CreateDigitChargeInfo(digitChargeInfo);
-  std::vector<TH1*> digitChargeInfoSt[3] = { {}, {}, {} };
+  std::vector<TH1*> digitChargeInfoSt[3] = {{}, {}, {}};
   CreateDigitChargeInfo(digitChargeInfoSt[0], "St1");
   CreateDigitChargeInfo(digitChargeInfoSt[1], "St2");
   CreateDigitChargeInfo(digitChargeInfoSt[2], "St345");
