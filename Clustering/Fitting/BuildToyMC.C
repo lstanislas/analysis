@@ -55,6 +55,7 @@ void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double
 // asymm : "none" = no asymmetry ; "copy" = copy the asymmetry from the data or from the fit; "gaus_XpX" = default asymm function in MC * XpX; "tripleGaus" = triple gaussians
 // noise : "none" = no noise ; "MC_XpX" = gaussian noise with sigma = 0.5 * (sqrt(nSamples) + XpX) ; "MULT_XpX_XpX_XpX" = gaussian noise with sigma = XpX * sqrt(ADC) + XpX * ADC + XpX * sqrt(ADC) * ADC ; "predefined" = tuning per-station and cathode
 // threshold : "none" = no threshold ; "gaus" = gaussian threshold ; "uniform" = static threshold
+// k3x and k3y : change K3 values if positive
 // try_tmc : redo ToyMC if the cluster isnt in the correct subspace (default = 50)
 //_________________________________________________________________________________________________
 

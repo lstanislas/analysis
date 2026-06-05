@@ -51,7 +51,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
   auto [dataFileIn, dataReader] = LoadData(inFile, "data");
   TTreeReaderValue<TrackParamStruct> trackParam(*dataReader, "trackParameters");
-  // TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
+  TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
   TTreeReaderValue<Cluster> cluster(*dataReader, "clusters");
   TTreeReaderValue<std::vector<Digit>> digits(*dataReader, "digits");
   std::unique_ptr<TTreeReaderArray<double>> fitParameters{};
@@ -114,16 +114,16 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
 
     // cut on digit time
     std::vector<Digit> selectedDigits(*digits);
-    // if (applyTimeSelection) {
-    //   selectedDigits.erase(
-    //     std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
-    //       return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
-    //     }),
-    //     selectedDigits.end());
-    //   if (selectedDigits.empty()) {
-    //     continue;
-    //   }
-    // }
+    if (applyTimeSelection) {
+      selectedDigits.erase(
+        std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
+          return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
+        }),
+        selectedDigits.end());
+      if (selectedDigits.empty()) {
+        continue;
+      }
+    }
 
     // reject mono-cathode clusters after digit selection
     const auto [sizeX, sizeY] = GetSize(selectedDigits);
@@ -231,7 +231,7 @@ void DrawPreClusters(int run, bool applyTrackSelection = false, bool applyCluste
       // if (!(&digit == digitMaxB || &digit == digitMaxNB)) {
       //   continue;
       // }
-      // FillDigitTimeInfo(digit, *trackTime, digitTimeInfo);
+      FillDigitTimeInfo(digit, *trackTime, digitTimeInfo);
       FillDigitChargeInfo(digit, digitChargeInfo, chargeAsymm, run < 300000);
       FillDigitChargeInfo(digit, digitChargeInfoSt[iSt], chargeAsymm, run < 300000);
     }
