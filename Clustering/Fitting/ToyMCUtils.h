@@ -8,6 +8,7 @@
 #include "DataFormatsMCH/Digit.h"
 #include "MCHMappingInterface/Segmentation.h"
 #include "MCHSimulation/Response.h"
+#include "Framework/Logger.h"
 
 #include "PreClusterUtils.h"
 
@@ -18,29 +19,77 @@ using o2::mch::Response;
 std::mt19937 mRandom{std::random_device{}()};
 
 //_________________________________________________________________________________________________
-void AddNoise(double& charge, uint32_t nSamples, std::string mode)
+void ConfiguredNoise(double& charge, int iSt, bool isBending)
 {
-  auto salpha = mode.substr(mode.find('_') + 1);
-  std::replace(salpha.begin(), salpha.end(), 'p', '.');
-  double alpha = std::stod(salpha);
 
-  if (mode.starts_with("MC_")) {
+  // tuning per-station and cathode
+  static constexpr std::array<std::array<double, 2>, 3> alpha = {{{1.3, 1.3}, {0.79, 0.82}, {0.77, 0.93}}};
+  static constexpr std::array<std::array<double, 2>, 3> beta = {{{-0.085, -0.095}, {0.0058, 0.012}, {-0.034, -0.068}}};
+  static constexpr std::array<std::array<double, 2>, 3> gamma = {{{0.0048, 0.005}, {0.0067, 0.0071}, {0.004, 0.006}}};
 
-    // for MC th. noise
-    static std::normal_distribution mNoise{0., 0.5};
-    charge += mNoise(mRandom) * (std::sqrt(nSamples) + alpha);
+  static std::normal_distribution mNoise{0., 1.};
+  const int cathodeIndex = isBending ? 0 : 1;
 
-  } else if (mode.starts_with("sADC_")) {
+  const double a = alpha[iSt][cathodeIndex];
+  const double b = beta[iSt][cathodeIndex];
+  const double g = gamma[iSt][cathodeIndex];
 
-    // sqrt of ADC noise
-    static std::normal_distribution mNoise{0., 1.};
-    charge += mNoise(mRandom) * std::sqrt(charge) * alpha;
+  const double sqrtQ = std::sqrt(charge);
+  const double sigma = a * sqrtQ + b * charge + g * charge * sqrtQ;
+  charge += mNoise(mRandom) * sigma;
+}
+//_________________________________________________________________________________________________
+void AddNoise(double& charge, uint32_t nSamples, std::string mode, int deId, bool isBending)
+{
+  // define station from deId
+  int iSt = (deId < 300) ? 0 : ((deId < 500) ? 1 : 2);
 
-  } else if (mode.starts_with("RATIO_")){
-
-    static std::normal_distribution mNoise{0., 1.};
-    charge += mNoise(mRandom) * (0.0013 * charge * std::sqrt(charge) + 0.64 * std::sqrt(charge));
+  if (mode == "none") {
+    return;
   }
+
+  if (mode.rfind("predefined", 0) == 0) { // starts_with
+    ConfiguredNoise(charge, iSt, isBending);
+    return;
+  }
+
+  if (mode.rfind("MC_", 0) == 0) { // gaussian MC noise: 0.5*(sqrt(nSamples)+alpha)
+    auto salpha = mode.substr(3);
+    std::replace(salpha.begin(), salpha.end(), 'p', '.');
+    double alpha = 1.0;
+    try {
+      alpha = std::stod(salpha);
+    } catch (...) {
+      LOGP(warn, "MC_ noise: invalid alpha '{}', defaulting to 1.0", salpha);
+    }
+    static std::normal_distribution mNoiseMC{0., 0.5};
+    charge += mNoiseMC(mRandom) * (std::sqrt(static_cast<double>(nSamples)) + alpha);
+    return;
+  }
+
+  if (mode.rfind("MULT_", 0) == 0) {
+    auto params = mode.substr(5);
+    std::replace(params.begin(), params.end(), 'p', '.');
+    size_t pos1 = params.find('_');
+    size_t pos2 = (pos1 == std::string::npos) ? std::string::npos : params.find('_', pos1 + 1);
+    if (pos1 != std::string::npos && pos2 != std::string::npos) {
+      double a = 1.0, b = 0.0, g = 0.0;
+      try {
+        a = std::stod(params.substr(0, pos1));
+        b = std::stod(params.substr(pos1 + 1, pos2 - pos1 - 1));
+        g = std::stod(params.substr(pos2 + 1));
+      } catch (...) {
+        LOGP(warn, "MULT_ noise: failed to parse parameters '{}', using defaults", params);
+      }
+      static std::normal_distribution mNoise{0., 1.};
+      const double sqrtQ = std::sqrt(charge);
+      const double sigma = a * sqrtQ + b * charge + g * charge * sqrtQ;
+      charge += mNoise(mRandom) * sigma;
+    }
+    return;
+  }
+
+  LOGP(error, "unknown noise mode '{}'", mode);
 }
 
 //_________________________________________________________________________________________________
@@ -115,7 +164,7 @@ void TMC(std::vector<Digit>& digits, int32_t time, int deId, std::array<double, 
       q *= mSegmentation.isBendingPad(padid) ? param[4] : param[5];
       auto nSamples = response[iSt].nSamples(q);
       if (noise != "none") {
-        AddNoise(q, nSamples, noise);
+        AddNoise(q, nSamples, noise, deId, mSegmentation.isBendingPad(padid));
       }
       if (IsAboveThreshold(q, threshold)) {
         digits.emplace_back(deId, padid, std::round(q), time - 2, std::min(nSamples, 0x3FFU), false);
@@ -123,4 +172,3 @@ void TMC(std::vector<Digit>& digits, int32_t time, int deId, std::array<double, 
     }
   });
 }
-

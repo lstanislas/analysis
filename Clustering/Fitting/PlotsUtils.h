@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <vector>
+#include <functional>
 
 #include <TCanvas.h>
 #include <TStyle.h>
@@ -24,10 +25,14 @@ std::vector<TH1D*> hAsymm;
 
 //_________________________________________________________________________________________________
 // premade histograms for the analysis
+void DelHist();
+
 void LoadHist()
 {
+  DelHist(); // clear any previous histograms from a prior run in the same ROOT session
+
   // station index
-  int station[3] = { 1, 2, 345 };
+  int station[3] = {1, 2, 345};
 
   // chi2 vs ndf
   for (int i = 0; i < 3; ++i) {
@@ -156,7 +161,7 @@ void FillInfoHist(TH1D* h, const TString& titleX, const TString& titleY, const T
 }
 //_________________________________________________________________________________________________
 // plot a defined function
-TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., bool Asymm = false)
+TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., double beta = 0., bool Asymm = false)
 {
   TF1* Func = nullptr;
 
@@ -168,7 +173,7 @@ TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., bool Asymm = 
                               double result = (std::pow(charge / par[1], 1. / par[2]) + par[0]);
                               return (0.5 * (sqrt(std::round(result)) + par[4])); }, 0, 10000, 4);
       }
-      double signalParam[3] = { 14., 13., 1.5 };
+      double signalParam[3] = {14., 13., 1.5};
       Func->SetParameters(signalParam[0], signalParam[1], signalParam[2], alpha);
       Func->SetLineColor(4);
       Func->SetLineWidth(3);
@@ -182,7 +187,7 @@ TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., bool Asymm = 
                             return sqrt(0.25 * (std::round(result) + par[3]) + 0.25 * charge * charge * (TMath::Exp(8 * par[4] * par[4]) - TMath::Exp(4 * par[4] * par[4]))); }, 0, 10000, 5);
       }
       double sigmaAsymm = gamma * 0.055;
-      double signalParam[3] = { 14., 13., 1.5 };
+      double signalParam[3] = {14., 13., 1.5};
       Func->SetParameters(signalParam[0], signalParam[1], signalParam[2], alpha, sigmaAsymm);
       Func->SetLineColor(4);
       Func->SetLineWidth(3);
@@ -216,6 +221,19 @@ TF1* plotNoise(std::string sigma, double alpha, double gamma = 0., bool Asymm = 
       Func->SetLineStyle(1);
       Func->SetNpx(1000);
     }
+  } else if (sigma == "MULT") {
+    if (!Asymm) {
+      if (!Func) {
+        Func = new TF1("func", [](double* x, double* par) {
+          double charge = x[0];
+          return par[0] * std::sqrt(charge) + par[1] * charge + par[2] * charge * std::sqrt(charge); }, 0, 10000, 3);
+      }
+      Func->SetParameters(alpha, beta, gamma);
+      Func->SetLineColor(4);
+      Func->SetLineWidth(3);
+      Func->SetLineStyle(1);
+      Func->SetNpx(1000);
+    }
   } else {
     std::cerr << "Unknown sigma type!" << std::endl;
     return nullptr;
@@ -235,10 +253,14 @@ void plotSAME(std::vector<TH1D*> hist, const char* name, const char* title, bool
     COL = 2;
   }
 
-  c->Divide(COL, N / 2);
+  c->Divide(COL, (N / 2 + COL - 1) / COL);
   for (int i = 1; i < (N / 2 + 1); ++i) {
-    c->cd(i);
-    gPad->SetLogy();
+    TVirtualPad* pad = c->cd(i);
+    if (!pad) {
+      std::cerr << "plotSAME: cd(" << i << ") returned null\n";
+      continue;
+    }
+    pad->SetLogy();
     hist[2 * (i - 1)]->SetLineColor(2);
     hist[2 * (i - 1)]->Draw("HIST");
     hist[2 * (i - 1) + 1]->Draw("HIST SAME");
@@ -258,10 +280,14 @@ void plot1D(std::vector<TH1D*> hist, const char* name, const char* title, bool a
     COL = 2;
   }
 
-  c->Divide(COL, N);
+  c->Divide(COL, (N + COL - 1) / COL);
   for (int i = 1; i < N + 1; ++i) {
-    c->cd(i);
-    gPad->SetLogy();
+    TVirtualPad* pad = c->cd(i);
+    if (!pad) {
+      std::cerr << "plot1D: cd(" << i << ") returned null\n";
+      continue;
+    }
+    pad->SetLogy();
     hist[i - 1]->Draw("HIST");
   }
   c->Update();
@@ -279,10 +305,14 @@ void plot2D(std::vector<TH2D*> hist, const char* name, const char* title, bool a
     COL = 2;
   }
 
-  c->Divide(COL, N);
+  c->Divide(COL, (N + COL - 1) / COL);
   for (int i = 1; i < N + 1; ++i) {
-    c->cd(i);
-    gPad->SetLogz();
+    TVirtualPad* pad = c->cd(i);
+    if (!pad) {
+      std::cerr << "plot2D: cd(" << i << ") returned null\n";
+      continue;
+    }
+    pad->SetLogz();
     gStyle->SetPalette(kRainBow);
     hist[i - 1]->Draw("COLZ");
   }
@@ -291,15 +321,59 @@ void plot2D(std::vector<TH2D*> hist, const char* name, const char* title, bool a
 }
 
 //_________________________________________________________________________________________________
+// build the theoretical noise TF1 from a noise model string: "MULT_XpX_XpX_XpX", "sADC_XpX", "MC_XpX"
+// ('p' encodes the decimal point, same convention as BuildToyMC)
+TF1* noiseFromString(const std::string& noise)
+{
+  auto extractOne = [](const std::string& s, const std::string& pat) -> double {
+    size_t pos = s.find(pat);
+    if (pos == std::string::npos)
+      return 1.0;
+    std::string tok = s.substr(pos + pat.size());
+    size_t next = tok.find('_');
+    if (next != std::string::npos)
+      tok = tok.substr(0, next);
+    std::replace(tok.begin(), tok.end(), 'p', '.');
+    try {
+      return std::stod(tok);
+    } catch (...) {
+      return 1.0;
+    }
+  };
+
+  if (noise.find("MULT_") != std::string::npos) {
+    std::string s = noise.substr(noise.find("MULT_") + 5);
+    std::replace(s.begin(), s.end(), 'p', '.');
+    size_t p1 = s.find('_'),
+           p2 = (p1 != std::string::npos) ? s.find('_', p1 + 1) : std::string::npos;
+    double alpha = 1., beta = 0., gamma = 0.;
+    if (p1 != std::string::npos && p2 != std::string::npos) {
+      try {
+        alpha = std::stod(s.substr(0, p1));
+        beta = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
+        gamma = std::stod(s.substr(p2 + 1)); // rest of string, no trailing '_' needed
+      } catch (...) {
+      }
+    }
+    return plotNoise("MULT", alpha, gamma, beta);
+  } else if (noise.find("sADC_") != std::string::npos) {
+    return plotNoise("sADC", extractOne(noise, "sADC_"));
+  } else if (noise.find("MC_") != std::string::npos) {
+    return plotNoise("MC", extractOne(noise, "MC_"));
+  }
+  return plotNoise("sADC", 1.0);
+}
+
+//_________________________________________________________________________________________________
 // take two vectors of TGraphAsymmErrors object corresponding to a certain station, divide a canvas in two (B / NB),
 // plots the graphs along with a defined function from plotNoise
-void tGraphErrAsymm(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErrors*>& graphs2, const std::string& name, int station)
+void tGraphErrAsymm(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErrors*>& graphs2, const std::string& name, int station, const std::string& noise = "")
 {
 
   TCanvas* c = new TCanvas(name.c_str(), name.c_str(), 1200, 800);
   c->Divide(1, 2);
 
-  auto func = plotNoise("sADC", 1.0);
+  auto func = noiseFromString(noise);
 
   for (int i = 0; i < 2; ++i) {
     c->cd(i + 1);
@@ -333,8 +407,7 @@ void tGraph(std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, const 
 
   TGraph* plots[4] = {
     graphs1[2 * station], graphs2[2 * station],
-    graphs1[2 * station + 1], graphs2[2 * station + 1]
-  };
+    graphs1[2 * station + 1], graphs2[2 * station + 1]};
 
   for (int i = 0; i < 4; ++i) {
     c->cd(i + 1);
@@ -377,8 +450,10 @@ void tHist(std::vector<TH1D*>& hists1, std::vector<TH1D*>& hists2, const std::st
     subh2[i]->Draw("HIST SAME");
 
     TLegend* leg = new TLegend(0.65, 0.70, 0.88, 0.88);
-    leg->AddEntry(subh1[i], subh1[i]->GetTitle(), "l");
-    leg->AddEntry(subh2[i], subh2[i]->GetTitle(), "l");
+    TString title1 = Form("%s (N=%d)", subh1[i]->GetTitle(), (int)subh1[i]->GetEntries());
+    TString title2 = Form("%s (N=%d)", subh2[i]->GetTitle(), (int)subh2[i]->GetEntries());
+    leg->AddEntry(subh1[i], title1.Data(), "l");
+    leg->AddEntry(subh2[i], title2.Data(), "l");
     leg->Draw();
   }
 
@@ -389,13 +464,62 @@ void tHist(std::vector<TH1D*>& hists1, std::vector<TH1D*>& hists2, const std::st
 //_________________________________________________________________________________________________
 // take two vectors of TGraphAsymmErrors object corresponding to a station with a parameter alpha (to define a function with plotFunction),
 // divide a canvas in two (B / NB), plots the ratio of the y-data points between the two TGraphAsymmErrors object along with the corresponding errors
-void tRatio(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErrors*>& graphs2, const std::string& name, int station, const std::string& theory)
+void tRatio(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErrors*>& graphs2, const std::string& name, int station, const std::string& noise)
 {
 
-  double alpha = std::stod(theory);
-  auto lambda = [alpha](double charge) {
-    return alpha * sqrt(charge);
+  // parse noise model string (same format as BuildToyMC: "MULT_XpX_XpX_XpX", "sADC_XpX", "MC_XpX")
+  auto extractOne = [](const std::string& s, const std::string& pat) -> double {
+    size_t pos = s.find(pat);
+    if (pos == std::string::npos)
+      return 1.0;
+    std::string tok = s.substr(pos + pat.size());
+    size_t next = tok.find('_');
+    if (next != std::string::npos)
+      tok = tok.substr(0, next);
+    std::replace(tok.begin(), tok.end(), 'p', '.');
+    try {
+      return std::stod(tok);
+    } catch (...) {
+      return 1.0;
+    }
   };
+
+  TF1* func = noiseFromString(noise);
+  double alpha = 1.0, beta = 0.0, gamma = 0.0;
+  std::function<double(double)> lambda;
+
+  if (noise.find("MULT_") != std::string::npos) {
+    std::string s = noise.substr(noise.find("MULT_") + 5);
+    std::replace(s.begin(), s.end(), 'p', '.');
+    size_t p1 = s.find('_'),
+           p2 = (p1 != std::string::npos) ? s.find('_', p1 + 1) : std::string::npos;
+    if (p1 != std::string::npos && p2 != std::string::npos) {
+      try {
+        alpha = std::stod(s.substr(0, p1));
+        beta = std::stod(s.substr(p1 + 1, p2 - p1 - 1));
+        gamma = std::stod(s.substr(p2 + 1)); // rest of string, no trailing '_' needed
+      } catch (...) {
+      }
+    }
+    lambda = [alpha, beta, gamma](double charge) {
+      return alpha * std::sqrt(charge) + beta * charge + gamma * charge * std::sqrt(charge);
+    };
+    std::cout << "Using MULT_ equation with alpha=" << alpha << ", beta=" << beta << ", gamma=" << gamma << std::endl;
+  } else if (noise.find("sADC_") != std::string::npos) {
+    alpha = extractOne(noise, "sADC_");
+    lambda = [alpha](double charge) { return alpha * std::sqrt(charge); };
+    std::cout << "Using sADC_ equation with alpha=" << alpha << std::endl;
+  } else if (noise.find("MC_") != std::string::npos) {
+    alpha = extractOne(noise, "MC_");
+    lambda = [alpha](double charge) {
+      double result = std::pow(charge / 13., 1. / 1.5) + 14.;
+      return 0.5 * (std::sqrt(std::round(result)) + alpha);
+    };
+    std::cout << "Using MC_ equation with alpha=" << alpha << std::endl;
+  } else {
+    lambda = [](double charge) { return std::sqrt(charge); };
+    std::cout << "DEFAULT: Using sADC_ equation with alpha=1" << std::endl;
+  }
 
   TCanvas* c = new TCanvas(name.c_str(), name.c_str(), 1000, 800);
   c->Divide(1, 2);
@@ -421,8 +545,6 @@ void tRatio(std::vector<TGraphAsymmErrors*>& graphs1, std::vector<TGraphAsymmErr
     ratio->SetMarkerStyle(2);
     ratio_simple->SetMarkerStyle(2);
     ratio_simple->SetMarkerColor(kGreen);
-
-    auto func = plotNoise("sADC", 1.0);
 
     // since it is not said that the two TGraphAsymmErrors object should have the same number of elements with the same x values
     // we take as reference the first TGraphAsymmErrors object and loop over its elements (i index)

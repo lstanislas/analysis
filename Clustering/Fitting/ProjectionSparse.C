@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 
 #include <cmath>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -18,19 +19,21 @@
 // require the MCH mapping to be loaded:
 // gSystem->Load("libO2MCHGeometryTransformer"), gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
 
-// This macro will create a root file containing 6 TList (stations {1, 2, 345} x cathodes {B, NB})
-// + one TH2D which represent the residuals (ADC fit - ADC data) vs ADC fit
+// This macro creates a root file containing TList for each (station x cathode x sparse type) combination
+// sparse types : Fit (sigma_output), Noise (sigma_noise, ToyMC only), Total (sqrt(sigma_noise^2+sigma_Y^2), ToyMC only)
+// + one TH2D which represents the residuals (ADC data - ADC fit) vs ADC fit
 // cuts on asymmetry, total charge of the precluster, pvalue, NofSamples and the distance to the closest wire can be made
 // cuts mean looking into a specific range (except for wire)
 void ProjectionSparse(
   const std::string& inFile = "residuals_sparse.root",
   const std::string& outFile = "projection_sparse.root",
-  const bool auto_bin = true,                   // adjust bin in the resolution extraction
-  const std::pair<int, int>& projYX = { 1, 2 }, // default is Residual vs ADC from fitted pad
-  const std::pair<std::optional<double>, std::optional<double>>& asym = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& chargetot = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& pvalue = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& nsamples = { std::nullopt, std::nullopt },
+  const bool auto_bin = true,                 // adjust bin in the resolution extraction
+  const std::pair<int, int>& projYX = {1, 2}, // default is Residual vs ADC from fitted pad
+  const std::pair<std::optional<double>, std::optional<double>>& asym = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& chargetot = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& pvalue = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& nsamples = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& fraction = {std::nullopt, std::nullopt},
   const std::string& wire = "")
 {
   auto warning = [](const std::string& label, const auto& range) {
@@ -44,6 +47,7 @@ void ProjectionSparse(
   warning("Total Charge (ADC)", chargetot);
   warning("P-Value", pvalue);
   warning("NofSamples", nsamples);
+  warning("Fraction", fraction);
 
   if (!wire.empty()) {
     std::cout << "-- WARNING -- : WIRE selection is activated\n";
@@ -57,87 +61,111 @@ void ProjectionSparse(
     return;
   }
 
-  // 6 TList => odd : NBending, even : Bending (ordered by station number)
-  std::vector<TH2D*> Residual2D;
-  std::string sStation[3] = { "St1", "St2", "St345" };
-  TList* ListResidual[6];
+  // TList created on-the-fly for each (station x cathode x sparse type) found in the file
+  std::map<std::string, std::vector<TH2D*>> labelHistos;
+  std::vector<TList*> allListResidual;
+  std::string sStation[3] = {"St1", "St2", "St345"};
 
-  for (int i = 0; i < 6; ++i) {
-    ListResidual[i] = new TList();
-    std::string cathode = (i % 2 == 0) ? "Bend" : "NBend";
-    auto lName = fmt::format("Residual_{}_{}", sStation[i / 2], cathode);
-    ListResidual[i]->SetName(lName.c_str());
-  }
+  // sparse types : {THnSparse name prefix, output label}
+  // Noise and Total are only present in files produced from ToyMC input (see ResidualsSparse.C)
+  const std::vector<std::pair<std::string, std::string>> sparseTypes = {
+    {"MultiResolutionPreCluster", "Fit"},        // sigma_output (DATA or fitted TMC)
+    {"MultiResolutionPreClusterNoise", "Noise"}, // sigma_noise (ToyMC only, asymm="copy" or "none")
+    {"MultiResolutionPreClusterTotal", "Total"}  // sqrt(sigma_noise^2 + sigma_Y^2) (ToyMC only)
+  };
 
   auto tStart = std::chrono::high_resolution_clock::now();
   std::cout << "looping over the THnSparses ..." << std::endl;
 
-  for (int i = 0; i < 6; i++) {
-    auto sName = fmt::format("MultiResolutionPreCluster{}", sStation[i / 2]);
+  for (const auto& [prefix, label] : sparseTypes) {
+    for (int i = 0; i < 6; i++) {
+      auto sName = fmt::format("{}{}", prefix, sStation[i / 2]);
 
-    // multi dimensional histogram whose axes are : {pvalue, residuals, ADC_fit,
-    // ADC_mes, ADC_cluster, nSamples, Asymm, Wire, Cathode}
-    auto hSparse = dynamic_cast<THnSparse*>(f.Get(sName.c_str()));
-    if (!hSparse) {
-      std::cerr << "Warning: Could not find THnSparse " << sName << std::endl;
-      continue;
+      // multi dimensional histogram whose axes are : {pvalue, residuals, ADC_fit, ADC_mes, ADC_cluster, nSamples, Asymm, Wire, Cathode, fraction}
+      auto hSparse = dynamic_cast<THnSparse*>(f.Get(sName.c_str()));
+      if (!hSparse) {
+        continue; // skip if sparse not present in file (Noise/Total absent on DATA input)
+      }
+
+      // apply range cuts if needed :
+
+      // P-Value
+      if (pvalue.first && pvalue.second) {
+        hSparse->GetAxis(0)->SetRangeUser(*pvalue.first, *pvalue.second);
+      }
+
+      // Asymmetry
+      if (asym.first && asym.second) {
+        hSparse->GetAxis(6)->SetRangeUser(*asym.first, *asym.second);
+      }
+
+      // Total Charge (ADC)
+      if (chargetot.first && chargetot.second) {
+        hSparse->GetAxis(4)->SetRangeUser(*chargetot.first, *chargetot.second);
+      }
+
+      // nSamples
+      if (nsamples.first && nsamples.second) {
+        hSparse->GetAxis(5)->SetRangeUser(*nsamples.first, *nsamples.second);
+      }
+
+      // fraction
+      if (fraction.first && fraction.second) {
+        hSparse->GetAxis(9)->SetRangeUser(*fraction.first, *fraction.second);
+      }
+
+      // Wire
+      TAxis* axis7 = hSparse->GetAxis(7);
+      if (wire == "top") {
+        axis7->SetRange(1, 1);
+      } else if (wire == "between") {
+        axis7->SetRange(3, 3);
+      } else if (wire == "crossover") {
+        axis7->SetRange(2, 2);
+      }
+
+      // Cathode
+      TAxis* axis8 = hSparse->GetAxis(8);
+      std::string cathode = (i % 2 == 0) ? "Bend" : "NBend";
+      if (i % 2 == 0) {
+        axis8->SetRange(2, 2); // Bending bin
+      } else {
+        axis8->SetRange(1, 1); // NonBending bin
+      }
+
+      // 2D projection
+      TH2D* h2D = dynamic_cast<TH2D*>(hSparse->Projection(projYX.first, projYX.second));
+      auto hName = fmt::format("h2D_{}_{}_{}", label, sStation[i / 2], cathode);
+      h2D->SetName(hName.c_str());
+      h2D->SetTitle(hName.c_str());
+
+      auto lName = fmt::format("Residual_{}_{}_{}", label, sStation[i / 2], cathode);
+      TList* list = new TList();
+      list->SetName(lName.c_str());
+
+      int statistic = 2000;
+      Resolution(list, h2D, statistic, auto_bin);
+      allListResidual.push_back(list);
+
+      TH1D* tmpProjX = h2D->ProjectionX("_tmpProjX");
+      int lastBin = tmpProjX->FindLastBinAbove(0);
+      if (lastBin > 0) {
+        h2D->GetXaxis()->SetRangeUser(20, tmpProjX->GetBinCenter(lastBin) * 1.05);
+      }
+      delete tmpProjX;
+
+      labelHistos[label].push_back(h2D);
     }
-
-    // Apply any range cuts if needed :
-
-    // P-Value
-    if (pvalue.first && pvalue.second) {
-      hSparse->GetAxis(0)->SetRangeUser(*pvalue.first, *pvalue.second);
-    }
-
-    // Asymmetry
-    if (asym.first && asym.second) {
-      hSparse->GetAxis(6)->SetRangeUser(*asym.first, *asym.second);
-    }
-
-    // Total Charge (ADC)
-    if (chargetot.first && chargetot.second) {
-      hSparse->GetAxis(4)->SetRangeUser(*chargetot.first, *chargetot.second);
-    }
-
-    // nSamples
-    if (nsamples.first && nsamples.second) {
-      hSparse->GetAxis(5)->SetRangeUser(*nsamples.first, *nsamples.second);
-    }
-
-    // Wire
-    TAxis* axis7 = hSparse->GetAxis(7);
-    if (wire == "top") {
-      axis7->SetRange(1, 1);
-    } else if (wire == "between") {
-      axis7->SetRange(3, 3);
-    } else if (wire == "crossover") {
-      axis7->SetRange(2, 2);
-    }
-
-    // Cathode
-    TAxis* axis8 = hSparse->GetAxis(8);
-    if (i % 2 == 0) {
-      axis8->SetRange(2, 2); // Bending bin
-    } else {
-      axis8->SetRange(1, 1); // NonBending bin
-    }
-
-    // 2D projection
-    TH2D* h2D = dynamic_cast<TH2D*>(hSparse->Projection(projYX.first, projYX.second));
-    std::string cathode = (i % 2 == 0) ? "Bend" : "NBend";
-    auto hName = fmt::format("h2D_{}_{}", sStation[i / 2], cathode);
-    auto hTitle = fmt::format("h2D_{}_{}", sStation[i / 2], cathode);
-    h2D->SetName(hName.c_str());
-    h2D->SetTitle(hTitle.c_str());
-
-    Residual2D.push_back(h2D);
-    int statistic = 2000; // minimum entries to construct a bin
-    Resolution(ListResidual[i], h2D, statistic, auto_bin);
   }
-  std::cout << "Saving plots ..." << std::endl;
   gStyle->SetOptStat(1);
-  plot2D(Residual2D, "c_2Dresiduals", "residuals vs ADC", true);
+  for (const auto& [prefix, label] : sparseTypes) {
+    if (labelHistos.count(label) && !labelHistos[label].empty()) {
+      auto cName = fmt::format("c_2Dresiduals_{}", label);
+      plot2D(labelHistos[label], cName.c_str(), "residuals vs ADC", true);
+    }
+  }
+
+  std::cout << "Saving plots ..." << std::endl;
 
   TFile fOut(outFile.c_str(), "recreate");
   if (fOut.IsZombie()) {
@@ -145,14 +173,15 @@ void ProjectionSparse(
     return;
   }
 
-  for (int i = 0; i < 6; ++i) {
-    fOut.WriteTObject(ListResidual[i], ListResidual[i]->GetName());
+  for (auto* list : allListResidual) {
+    fOut.WriteTObject(list, list->GetName());
   }
 
-  if (TCanvas* c = dynamic_cast<TCanvas*>(gROOT->FindObject("c_2Dresiduals"))) {
-    c->Write();
-  } else {
-    std::cerr << "Warning: Canvas not found." << std::endl;
+  for (const auto& [prefix, label] : sparseTypes) {
+    auto cName = fmt::format("c_2Dresiduals_{}", label);
+    if (TCanvas* c = dynamic_cast<TCanvas*>(gROOT->FindObject(cName.c_str()))) {
+      c->Write();
+    }
   }
 
   fOut.Close();

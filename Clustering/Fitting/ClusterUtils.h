@@ -47,7 +47,28 @@ o2::math_utils::Point3D<float> GlobalToLocal(int de, float x, float y, float z, 
   o2::math_utils::Point3D<float> global{x, y, z};
   return transformation(de) ^ global;
 }
+//_________________________________________________________________________________________________
+o2::math_utils::Point3D<float> LocalToGlobal(int de, float x, float y, float z, bool run2 = false)
+{
+  /// return the cluster (or track) position in the global coordinate system
 
+  static o2::mch::geo::TransformationCreator transformation;
+  if (!transformation) {
+    if (run2) {
+      std::ifstream geoFile("AlignedGeometry.json");
+      if (!geoFile.is_open()) {
+        std::cout << "cannot open geometry file AlignedGeometry.json" << std::endl;
+        exit(-1);
+      }
+      transformation = o2::mch::geo::transformationFromJSON(geoFile);
+    } else {
+      transformation = o2::mch::geo::transformationFromTGeoManager(*gGeoManager);
+    }
+  }
+
+  o2::math_utils::Point3D<float> local{x, y, z};
+  return transformation(de)(local);
+}
 //_________________________________________________________________________________________________
 float DistanceToClosestWire(int de, float x)
 {

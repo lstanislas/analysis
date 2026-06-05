@@ -23,12 +23,13 @@
 void ProjectionK3Sparse(
   const std::string& inFile = "residuals_sparse.root",
   const std::string& outFile = "projection_sparse.root",
-  const std::pair<std::optional<double>, std::optional<double>>& pvalue = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& asym = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& chargetot = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& p = { std::nullopt, std::nullopt },
-  const std::pair<std::optional<double>, std::optional<double>>& phi = { std::nullopt, std::nullopt },
-  const std::string& wire = "")
+  const std::pair<std::optional<double>, std::optional<double>>& pvalue = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& asym = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& chargetot = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& p = {std::nullopt, std::nullopt},
+  const std::pair<std::optional<double>, std::optional<double>>& phi = {std::nullopt, std::nullopt},
+  const std::string& wire = "",
+  const std::pair<std::optional<double>, std::optional<double>>& fraction = {std::nullopt, std::nullopt})
 {
   auto warning = [](const std::string& label, const auto& range) {
     if (range.first && range.second) {
@@ -42,6 +43,7 @@ void ProjectionK3Sparse(
   warning("Track total momentum", p);
   warning("Track angle", phi);
   warning("P-Value", pvalue);
+  warning("Fraction", fraction);
 
   if (!wire.empty()) {
     std::cout << "-- WARNING -- : WIRE selection is activated\n";
@@ -57,7 +59,7 @@ void ProjectionK3Sparse(
 
   // k3x and k3y distribution histograms
   std::vector<TH1D*> k3x, k3y;
-  std::string sStation[3] = { "St1", "St2", "St345" };
+  std::string sStation[3] = {"St1", "St2", "St345"};
 
   auto tStart = std::chrono::high_resolution_clock::now();
   std::cout << "looping over the THnSparses ..." << std::endl;
@@ -97,6 +99,11 @@ void ProjectionK3Sparse(
     // Track angle (degrees)
     if (phi.first && phi.second) {
       hSparse->GetAxis(5)->SetRangeUser(*phi.first, *phi.second);
+    }
+
+    // fraction
+    if (fraction.first && fraction.second) {
+      hSparse->GetAxis(8)->SetRangeUser(*fraction.first, *fraction.second);
     }
 
     // Wire
