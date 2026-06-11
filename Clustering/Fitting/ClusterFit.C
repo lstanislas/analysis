@@ -10,6 +10,7 @@
 #include <TStyle.h>
 #include <TTree.h>
 #include <TTreeReader.h>
+#include <TTreeReaderArray.h>
 #include <TTreeReaderValue.h>
 
 #include "DataFormatsMCH/Cluster.h"
@@ -19,9 +20,9 @@
 #include "CCDBUtils.h"
 #include "ClusterUtils.h"
 #include "DataUtils.h"
+#include "DigitUtils.h"
 #include "FitUtils.h"
 #include "PreClusterUtils.h"
-#include "ResolutionUtils.h"
 
 using o2::mch::Cluster;
 using o2::mch::Digit;
@@ -34,13 +35,13 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
                 double k3x = 0.3, double k3y = 0.3, bool correctCharge = false,
                 std::array<int, 6> fix = {0, 0, 1, 1, 0, 0},
                 std::string inFile = "clusters.root", std::string outFile = "newclusters.root",
-                int correctADCfit = 0)
+                double minADCFit = 0.)
 {
-  /// correctADCFit option is necessary at this point because we need the .root format for later comparison (DrawPreClusters.C & DrawPreClustersComp.C)
   /// fit the digits attached to the selected clusters with Mathieson functions
   /// fitAsymm = true --> fit bending and non-bending cluster charge separately
   /// errorMode = "LS", "MLS", "MC", "MULT_XpX_XpX_XpX" or "const", combined with errorAlpha (see FitUtils.h)
   /// MULT_XpX_XpX_XpX uses sigma = a*sqrt(Q) + b*Q + g*Q*sqrt(Q), matching the TMC noise model syntax
+  /// select preclusters with all digit ADC values from the fit > minADCFit (or reject them if minADCFit < 0)
   /// store the new clusters together with the corresponding input data in outFile
   /// require the MCH mapping to be loaded: gSystem->Load("libO2MCHGeometryTransformer"),  gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
 
@@ -58,17 +59,14 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
   TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
   TTreeReaderValue<Cluster> cluster(*dataReader, "clusters");
   TTreeReaderValue<std::vector<Digit>> digits(*dataReader, "digits");
+  std::unique_ptr<TTreeReaderArray<double>> mcParameters{};
+  if (dataReader->GetTree()->FindBranch("parameters")) {
+    mcParameters = std::make_unique<TTreeReaderArray<double>>(*dataReader, "parameters");
+  }
 
   // setup the output
   TFile dataFileOut(outFile.c_str(), "recreate");
-  bool hasTrueParams = dataReader->GetTree()->FindBranch("parameters") != nullptr;
-  if (hasTrueParams) {
-    dataReader->GetTree()->SetBranchStatus("parameters", 0);
-  }
   TTree* dataTreeOut = dataReader->GetTree()->CloneTree(0);
-  if (hasTrueParams) {
-    dataReader->GetTree()->SetBranchStatus("parameters", 1);
-  }
   dataTreeOut->SetTitle("tree with input and output data");
   Cluster newCluster;
   dataTreeOut->Branch("newClusters", &newCluster);
@@ -78,13 +76,6 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
   dataTreeOut->Branch("pvalue", &pvalue);
   double chi2;
   dataTreeOut->Branch("chi2", &chi2);
-
-  std::unique_ptr<TTreeReaderArray<double>> trueParamsProxy{};
-  std::array<double, 6> trueParamsBuffer{};
-  if (hasTrueParams) {
-    trueParamsProxy = std::make_unique<TTreeReaderArray<double>>(*dataReader, "parameters");
-    dataTreeOut->Branch("parameters", &trueParamsBuffer);
-  }
 
   std::vector<TH1*> preClusterInfo{};
   CreatePreClusterInfo(preClusterInfo);
@@ -97,6 +88,8 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
   int iCluster = 0;
   int selected = 0;
   int fitted = 0;
+  int selected2 = 0;
+  auto adcFitThreshold = std::abs(minADCFit);
   auto tStart = std::chrono::high_resolution_clock::now();
   while (dataReader->Next()) {
     if (++iCluster % 10000 == 0) {
@@ -164,9 +157,32 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
       continue;
     }
 
+    // get the fit results
+    for (int i = 0; i < 5; ++i) {
+      fitParameters[i] = result.Parameter(i);
+    }
+    fitParameters[5] = fitAsymm ? result.Parameter(5) : result.Parameter(4);
     chi2 = result.Chi2();
     pvalue = result.Prob();
     ++fitted;
+
+    // cut on digit ADC values from the fit
+    if (minADCFit != 0.) {
+      bool skip = false;
+      for (const auto& digit : selectedDigits) {
+        if (GetChargeIntegral(digit, fitParameters) < adcFitThreshold) {
+          skip = true;
+          break; // stop checking further digits if one fails
+        }
+      }
+      if (skip && minADCFit > 0.) { // skip clusters with at least one ADCfit < minADCFit
+        continue;
+      }
+      if (!skip && minADCFit < 0.) { // skip clusters where all ADCfit > |minADCFit| (keep only those rejected by the positive cut)
+        continue;
+      }
+    }
+    ++selected2;
 
     // fill characteristics of selected preclusters successfully fitted
     const auto [sizeX, sizeY] = GetSize(selectedDigits);
@@ -175,47 +191,21 @@ void ClusterFit(int run, bool fitAsymm = true, std::string errorMode = "MLS", do
     FillPreClusterInfo(chargeNB, chargeB, sizeX, sizeY, preClusterInfoSt[iSt]);
 
     // fill output tree
-    for (int i = 0; i < 5; ++i) {
-      fitParameters[i] = result.Parameter(i);
+    *trackParam; // this is just to trigger the reading/copying of input data even if not used
+    *trackTime;  // this is just to trigger the reading/copying of input data even if not used
+    if (mcParameters) {
+      (*mcParameters)[0]; // this is just to trigger the reading/copying of input data even if not used
     }
-
-    // cut on ADC
-    if (correctADCfit != 0) {
-      std::vector<double> parameters;
-      for (int i = 0; i < 6; ++i) {
-        parameters.push_back(fitParameters[i]);
-      }
-      parameters[5] = fitAsymm ? result.Parameter(5) : result.Parameter(4);
-
-      bool skip = false;
-      for (auto digit : selectedDigits) {
-        if (ADCFit(digit, parameters) < std::abs(correctADCfit)) {
-          skip = true;
-          break; // stop checking further digits if one fails
-        }
-      }
-      if (skip && correctADCfit > 0) { // skip clusters with at least one ADCfit < correctADCfit
-        continue;
-      }
-      if (!skip && correctADCfit < 0) { // skip clusters where all ADCfit > |correctADCfit| (keep only those rejected by the positive cut)
-        continue;
-      }
-    }
-
-    fitParameters[5] = fitAsymm ? result.Parameter(5) : result.Parameter(4);
     newCluster = MakeCluster(cluster->uid, result.Parameter(0), result.Parameter(1));
-    if (trueParamsProxy) {
-      for (int i = 0; i < 6; ++i)
-        trueParamsBuffer[i] = (*trueParamsProxy)[i];
-    }
     dataTreeOut->Fill();
   }
 
   auto tEnd = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> timer = tEnd - tStart;
   cout << "\r\033[Kprocessing completed. Duration = " << timer.count() << " s" << endl;
-  cout << "selected clusters = " << selected << " / " << nClusters << endl;
-  cout << "successfully fitted = " << fitted << " / " << selected << endl;
+  cout << "selected clusters = " << selected << " / " << nClusters << " (" << 100. * selected / nClusters << "%)" << endl;
+  cout << "successfully fitted = " << fitted << " / " << selected << " (" << 100. * fitted / selected << "%)" << endl;
+  cout << "selected on digit ADC = " << selected2 << " / " << fitted << " (" << 100. * selected2 / fitted << "%)" << endl;
 
   gStyle->SetOptStat(1);
 

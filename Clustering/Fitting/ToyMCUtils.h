@@ -10,6 +10,7 @@
 #include "MCHSimulation/Response.h"
 #include "Framework/Logger.h"
 
+#include "DigitUtils.h"
 #include "PreClusterUtils.h"
 
 using o2::mch::Digit;
@@ -139,6 +140,7 @@ void TMC(std::vector<Digit>& digits, int32_t time, int deId, std::array<double, 
          std::string asymm, std::string noise, std::string threshold)
 {
   static const Response response[] = {{o2::mch::Station::Type1}, {o2::mch::Station::Type2345}};
+  const auto& mathieson = GetMathieson((deId / 100 - 1) / 2, sqrt(param[2]), sqrt(param[3]));
   const auto& mSegmentation = o2::mch::mapping::segmentation(deId);
   int iSt = (deId < 300) ? 0 : 1;
 
@@ -159,7 +161,7 @@ void TMC(std::vector<Digit>& digits, int32_t time, int deId, std::array<double, 
     auto dy = mSegmentation.padSizeY(padid) * 0.5;
     auto xPad = mSegmentation.padPositionX(padid) - param[0];
     auto yPad = mSegmentation.padPositionY(padid) - param[1];
-    double q = response[iSt].chargePadfraction(xPad - dx, xPad + dx, yPad - dy, yPad + dy);
+    double q = mathieson.integrate(xPad - dx, yPad - dy, xPad + dx, yPad + dy);
     if (response[iSt].isAboveThreshold(q)) {
       q *= mSegmentation.isBendingPad(padid) ? param[4] : param[5];
       auto nSamples = response[iSt].nSamples(q);

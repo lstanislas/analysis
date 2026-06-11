@@ -66,7 +66,7 @@ The output is a root file (default = `newclusters.root`) containing:
 - `correctCharge` (default `false`): if `true`, corrects the total bending/non-bending charges using the Mathieson charge fraction computed at the cluster position before fitting
 - `fix` (default `{0,0,1,1,0,0}`): array of 6 flags to fix fit parameters `{X, Y, sqrtK3x, sqrtK3y, Qb, Qnb}` (1 = fixed, 0 = free); by default K3 parameters are fixed to `k3x`/`k3y`
 - `inFile`, `outFile`: input and output file paths
-- `correctADCfit` (default `0`): if positive, discards clusters with at least one digit having `ADCfit < correctADCfit`; if negative, keeps only clusters that would be rejected by the positive cut (i.e. clusters with at least one digit having `ADCfit < |correctADCfit|`)
+- `minADCFit` (default `0`): if positive, discards clusters with at least one digit having `ADCfit < minADCFit`; if negative, keeps only clusters that would be rejected by the positive cut (i.e. clusters with at least one digit having `ADCfit < |minADCFit|`)
 
 ### Example
 ```shell
@@ -145,7 +145,7 @@ gSystem->Load("libO2MCHTracking")
 ### Description
 - Loop over the clusters from a ClusterFit output.
 - Apply the same selections as [ClusterFit.C](#clusterfitc): track angle, digit time, mono-cathode rejection, disjoint precluster rejection, fittability, charge asymmetry, K3, and ADC cuts.
-- Fill a 9-dimensional THnSparse per station with axes `{pvalue, K3x, K3y, ADC_cluster, p, phi, Asymm, Wire, fraction}` to study the distribution of the Mathieson K3 parameters as a function of kinematic and cluster variables.
+- Fill a 8-dimensional THnSparse per station with axes `{pvalue, K3x, K3y, ADC_cluster, p, phi, Asymm, Wire}` to study the distribution of the Mathieson K3 parameters as a function of kinematic and cluster variables.
 - To be projected with [ProjectionK3Sparse.C](#projectionk3sparsec).
 
 The THnSparse axes are:
@@ -159,7 +159,6 @@ The THnSparse axes are:
 | 5 | `phi` | track angle at chamber (degrees) |
 | 6 | `Asymm` | charge asymmetry `(Qnb - Qb) / (Qnb + Qb)` |
 | 7 | `Wire` | distance to closest wire (0 = top, 1 = crossover, 2 = between) |
-| 8 | `fraction` | pad charge fraction `ADC_digit / Qtot_cathode` |
 
 ### Output
 The output is a root file (default = `k3sparse.root`) containing:
@@ -170,7 +169,7 @@ The output is a root file (default = `k3sparse.root`) containing:
 - `run`: run number
 - `inFile` (default `"clusters.root"`): input file — must be the output of [ClusterFit.C](#clusterfitc)
 - `outFile` (default `"k3sparse.root"`): output file
-- `correctADCfit` (default `5`): same ADCfit cut as in [ResidualsSparse.C](#residualssparsec)
+- `minADCFit` (default `5`): same ADCfit cut as in [ResidualsSparse.C](#residualssparsec)
 
 ### Example
 ```shell
@@ -202,13 +201,9 @@ All cut parameters are `std::pair<std::optional<double>, std::optional<double>>`
 - `p`: track total momentum range (axis 4), in GeV/c
 - `phi`: track angle at chamber range (axis 5), in degrees
 - `wire`: wire position cut (axis 7): `"top"`, `"crossover"`, `"between"`, or `""` for no cut
-- `fraction`: pad charge fraction range cut (axis 8), e.g. `{0.1, 1.0}`
 
 ### Example
 ```shell
-gSystem->Load("libO2MCHGeometryTransformer")
-gSystem->Load("libO2MCHMappingImpl4")
-gSystem->Load("libO2MCHTracking")
 .x ProjectionK3Sparse.C+("k3sparse.root", "k3projection.root", {0.05, 1.0}, {-0.1, 0.1})
 ```
 
@@ -235,7 +230,7 @@ The THnSparse axes are:
 | 5 | `nSamples` | number of time samples used for digitization |
 | 6 | `Asymm` | charge asymmetry `(Qnb - Qb) / (Qnb + Qb)` |
 | 7 | `Wire` | distance to closest wire (0 = top, 1 = crossover, 2 = between) |
-| 8 | `Cathode` | cathode plane (1 = non-bending, 2 = bending) |
+| 8 | `Cathode` | cathode plane (-1 = non-bending, 1 = bending) |
 | 9 | `fraction` | pad charge fraction `ADC_digit / Qtot_cathode` |
 
 ### Output
@@ -250,8 +245,8 @@ The output is a root file (default = `residuals_sparse.root`) containing:
 - `run`: run number
 - `inFile` (default `"clusters.root"`): input file — must be the output of [ClusterFit.C](#clusterfitc) (DATA or TMC)
 - `outFile` (default `"residuals_sparse.root"`): output file
-- `correctADCfit` (default `5`): ADCfit cut (same sign convention as in [ClusterFit.C](#clusterfitc))
-- `correctADC` (default `15`): minimum measured ADC threshold — discards clusters with at least one digit having `ADC < correctADC`
+- `minADCFit` (default `5`): ADCfit cut (same sign convention as in [ClusterFit.C](#clusterfitc))
+- `minADC` (default `15`): minimum measured ADC threshold — discards clusters with at least one digit having `ADC < minADC`
 - `correctCharge` (default `false`): if `true`, corrects the total bending/non-bending charges using the Mathieson charge fraction before computing the asymmetry and `ADC_cluster`
 
 ### Example
@@ -292,9 +287,6 @@ The output is a root file (default = `projection_sparse.root`) containing:
 
 ### Example
 ```shell
-gSystem->Load("libO2MCHGeometryTransformer")
-gSystem->Load("libO2MCHMappingImpl4")
-gSystem->Load("libO2MCHTracking")
 .x ProjectionSparse.C+("residuals_tmc.root", "projection_tmc.root", true, {1,2}, {-0.1, 0.1})
 ```
 
@@ -329,9 +321,6 @@ The output is a root file (default = `resolution_ratio.root`) containing:
 
 ### Example
 ```shell
-gSystem->Load("libO2MCHGeometryTransformer")
-gSystem->Load("libO2MCHMappingImpl4")
-gSystem->Load("libO2MCHTracking")
 // compare Fit (DATA) vs Fit (TMC) with MULT theoretical curve:
 .x DrawResolutionRatioComp.C+("projection_data.root", "projection_tmc.root", "comparison.root", "Fit", "Fit", "MULT_1p3_0p0_0p005")
 // compare Noise (TMC) vs Fit (DATA):
@@ -351,9 +340,8 @@ Contains the core functions for ToyMC digit generation used by [BuildToyMC.C](#b
 ## ResolutionUtils.h
 
 Contains the functions to fill the THnSparses and extract the sigma of the residuals distribution, used by [ResidualsSparse.C](#residualssparsec) and [ProjectionSparse.C](#projectionsparsec):
-- `FillResolutionInfo(digit, parameters, hSparse)`: fills one entry in a 10D THnSparse from a digit and a 12-element parameter vector `{X, Y, sqrtK3x, sqrtK3y, Qb, Qnb, Q_tot, Asymm, Wire, pvalue, Qb_tot, Qnb_tot}`
+- `FillResolutionInfo(digit, ADC_fit, plane, parameters, hSparse)`: fills one entry in a 10D THnSparse from a digit and a 6-element cluster parameter vector `{Q_tot, Asymm, Wire, pvalue, Qb_tot, Qnb_tot}`
 - `Resolution(list, h2D, statistic, auto_bin)`: extracts `sigma_output` vs ADCfit from a TH2D and stores the results in a TList
-- `ADCFit(digit, parameters)`: returns the expected ADC from the Mathieson fit for a given digit
 - `CreatePreClusterInfoMULTI(extension)`: creates a 10D THnSparse with the standard axis binning
 
 ## FitUtils.h

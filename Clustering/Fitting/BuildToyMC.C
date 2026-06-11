@@ -30,20 +30,7 @@ using o2::mch::Digit;
 using o2::mch::TrackParamStruct;
 
 static constexpr double pi = 3.14159265358979323846;
-//_________________________________________________________________________________________________
-void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double sqrtk3x_2345, const double sqrtk3y_2345)
-{
-  std::string K3X_1 = std::to_string(sqrtk3x_1);
-  std::string K3Y_1 = std::to_string(sqrtk3y_1);
-  std::string K3X_2345 = std::to_string(sqrtk3x_2345);
-  std::string K3Y_2345 = std::to_string(sqrtk3y_2345);
 
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKx3St1", K3X_1);
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKy3St1", K3Y_1);
-
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKx3St2345", K3X_2345);
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKy3St2345", K3Y_2345);
-}
 //_________________________________________________________________________________________________
 // run : run number
 // inFile : root data file
@@ -55,7 +42,7 @@ void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double
 // asymm : "none" = no asymmetry ; "copy" = copy the asymmetry from the data or from the fit; "gaus_XpX" = default asymm function in MC * XpX; "tripleGaus" = triple gaussians
 // noise : "none" = no noise ; "MC_XpX" = gaussian noise with sigma = 0.5 * (sqrt(nSamples) + XpX) ; "MULT_XpX_XpX_XpX" = gaussian noise with sigma = XpX * sqrt(ADC) + XpX * ADC + XpX * sqrt(ADC) * ADC ; "predefined" = tuning per-station and cathode
 // threshold : "none" = no threshold ; "gaus" = gaussian threshold ; "uniform" = static threshold
-// k3x and k3y : change K3 values if positive
+// k3x and k3y : change K3 values if positive (superseed other settings)
 // try_tmc : redo ToyMC if the cluster isnt in the correct subspace (default = 50)
 //_________________________________________________________________________________________________
 
@@ -115,13 +102,12 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     fitParameters = std::make_unique<TTreeReaderArray<double>>(*dataReader, "fitParameters");
   }
 
-  // setup the output
-  auto outFile = fmt::format("production/tmc/tmc_{}_{}_{}_{}_{}_{}_{}_{}.root", run, k3x, k3y, mode, fit, asymm, noise, threshold);
-
   // Create the output directory if it doesn't exist
   std::string outDir = "production/tmc";
-  gSystem->MakeDirectory(outDir.c_str());
+  gSystem->mkdir(outDir.c_str(), true);
 
+  // setup the output
+  auto outFile = fmt::format("production/tmc/tmc_{}_{}_{}_{}_{}_{}_{}_{}.root", run, k3x, k3y, mode, fit, asymm, noise, threshold);
   TFile dataFileOut(outFile.c_str(), "recreate");
   TTree* dataTreeOut = new TTree("data", "tree tmc data");
   TrackParamStruct etrackParam;
@@ -163,7 +149,9 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     // cut on digit time
     std::vector<Digit> selectedDigits(*digits);
     selectedDigits.erase(
-      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) { return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.; }),
+      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
+        return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
+      }),
       selectedDigits.end());
     if (selectedDigits.empty()) {
       continue;
@@ -182,7 +170,6 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
     // cut on precluster charge asymmetry
     auto [chargeNB, chargeB] = GetCharge(selectedDigits, run < 300000);
     double chargeAsymm = (chargeNB - chargeB) / (chargeNB + chargeB);
-
     if (std::abs(chargeAsymm) > 0.5) {
       continue;
     }
@@ -192,7 +179,6 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       continue;
     }
 
-    int iSt = (cluster->getChamberId() < 4) ? cluster->getChamberId() / 2 : 2;
     ++selected;
 
     //___________________INIT PARAMETERS___________________________
@@ -215,15 +201,9 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
       parameters[5] = chargeNB;  // Qnb_tot
     }
 
-    if (k3x > 0.) {
-      parameters[2] = k3x;
-    }
-    if (k3y > 0.) {
-      parameters[3] = k3y;
-    }
-
     // set K3X and K3Y for the predefined noise since the study was done with these values
     if (noise == "predefined") {
+      int iSt = (cluster->getChamberId() < 4) ? cluster->getChamberId() / 2 : 2;
       if (iSt == 0) {
         parameters[2] = 0.3;
         parameters[3] = 0.32;
@@ -235,10 +215,14 @@ void BuildToyMC(int run, std::string inFile, std::string mode, std::string fit,
         parameters[3] = 0.33;
       }
     }
-    // setup the mathieson
-    auto sqrtK3x = sqrt(parameters[2]);
-    auto sqrtK3y = sqrt(parameters[3]);
-    SetupMathieson(sqrtK3x, sqrtK3y, sqrtK3x, sqrtK3y);
+
+    // set K3X and K3Y to requested values (superseed other settings)
+    if (k3x > 0.) {
+      parameters[2] = k3x;
+    }
+    if (k3y > 0.) {
+      parameters[3] = k3y;
+    }
 
     //___________________RUN MC___________________________
     if (mode == "full") {

@@ -16,9 +16,6 @@
 #include "ResolutionUtils.h"
 
 //_________________________________________________________________________________________________
-// require the MCH mapping to be loaded:
-// gSystem->Load("libO2MCHGeometryTransformer"), gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
-
 // This macro creates a root file containing TList for each (station x cathode x sparse type) combination
 // sparse types : Fit (sigma_output), Noise (sigma_noise, ToyMC only), Total (sqrt(sigma_noise^2+sigma_Y^2), ToyMC only)
 // + one TH2D which represents the residuals (ADC data - ADC fit) vs ADC fit

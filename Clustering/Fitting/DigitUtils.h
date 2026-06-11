@@ -17,9 +17,12 @@
 #include <TLegend.h>
 
 #include "DataFormatsMCH/Digit.h"
+#include "MCHBase/MathiesonOriginal.h"
+#include "MCHBase/ResponseParam.h"
 #include "MCHMappingInterface/Segmentation.h"
 
 using o2::mch::Digit;
+using o2::mch::MathiesonOriginal;
 
 /*
  * This file contains utility functions to produce digit control plots.
@@ -43,6 +46,70 @@ double adcToCharge(uint32_t adc)
   std::memcpy(&charge, &adc, sizeof(adc));
 
   return static_cast<double>(charge) * fc2adc;
+}
+
+//_________________________________________________________________________________________________
+const MathiesonOriginal& GetMathieson(int station, float sqrtK3x, float sqrtK3y)
+{
+  /// return the Mathieson function for this station and those k3 parameters
+  /// !!! any call to this function potentially change the returned Mathieson and its references
+
+  static float mathiesonSqrtK3x[] = {0., 0., 0.};
+  static float mathiesonSqrtK3y[] = {0., 0., 0.};
+  static MathiesonOriginal mathieson[] = {{}, {}, {}};
+  static bool init = false;
+
+  if (!init) {
+    mathieson[0].setPitch(o2::mch::ResponseParam::Instance().pitchSt1);
+    mathieson[1].setPitch(o2::mch::ResponseParam::Instance().pitchSt2345);
+    mathieson[2].setPitch(o2::mch::ResponseParam::Instance().pitchSt2345);
+    init = true;
+  }
+
+  int iSt = (station < 2) ? station : 2;
+
+  if (sqrtK3x != mathiesonSqrtK3x[iSt]) {
+    mathieson[iSt].setSqrtKx3AndDeriveKx2Kx4(sqrtK3x);
+    mathiesonSqrtK3x[iSt] = sqrtK3x;
+  }
+
+  if (sqrtK3y != mathiesonSqrtK3y[iSt]) {
+    mathieson[iSt].setSqrtKy3AndDeriveKy2Ky4(sqrtK3y);
+    mathiesonSqrtK3y[iSt] = sqrtK3y;
+  }
+
+  return mathieson[iSt];
+}
+
+//_________________________________________________________________________________________________
+double GetChargeIntegral(const Digit& digit, const gsl::span<double> parameters)
+{
+  /// return the charge seen by the digit given the cluster parameters
+  /// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot}
+
+  int station = (digit.getDetID() / 100 - 1) / 2;
+  float sqrtK3x = sqrt(parameters[2]);
+  float sqrtK3y = sqrt(parameters[3]);
+  const auto& mathieson = GetMathieson(station, sqrtK3x, sqrtK3y);
+
+  const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
+
+  auto padid = digit.getPadID();
+  auto dx = segmentation.padSizeX(padid) * 0.5;
+  auto dy = segmentation.padSizeY(padid) * 0.5;
+  auto xPad = segmentation.padPositionX(padid) - parameters[0];
+  auto yPad = segmentation.padPositionY(padid) - parameters[1];
+  auto qPad = mathieson.integrate(xPad - dx, yPad - dy, xPad + dx, yPad + dy);
+
+  return qPad * (segmentation.isBendingPad(padid) ? parameters[4] : parameters[5]);
+}
+
+//_________________________________________________________________________________________________
+bool IsBending(const Digit& digit)
+{
+  /// return true if the digit is on the bending plane
+
+  return o2::mch::mapping::segmentation(digit.getDetID()).isBendingPad(digit.getPadID());
 }
 
 //_________________________________________________________________________________________________

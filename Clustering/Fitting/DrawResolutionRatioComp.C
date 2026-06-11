@@ -1,5 +1,6 @@
 #include <cmath>
 #include <vector>
+#include <sstream>
 #include <string>
 
 #include <fmt/format.h>
@@ -12,16 +13,9 @@
 #include <TH2D.h>
 #include <TH1D.h>
 
-#include "ClusterUtils.h"
-#include "DataUtils.h"
-#include "ResolutionUtils.h"
-#include "PreClusterUtils.h"
 #include "PlotsUtils.h"
 
 //_________________________________________________________________________________________________
-// require the MCH mapping to be loaded:
-// gSystem->Load("libO2MCHGeometryTransformer"), gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
-
 // This macro take the TList generated from ProjectionSparse.C for TMC and DATA
 // and return 5 types of canvas for the different stations (4x3 + 3x2 in total) ->
 // 1st type : plots of the std of the residuals distribution vs ADCfit

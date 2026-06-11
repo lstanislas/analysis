@@ -4,6 +4,8 @@
 
 #include <fmt/format.h>
 
+#include <gsl/span>
+
 #include <TFile.h>
 #include <TROOT.h>
 #include <TTreeReaderArray.h>
@@ -21,9 +23,10 @@
 #include "CCDBUtils.h"
 #include "ClusterUtils.h"
 #include "DataUtils.h"
-#include "ResolutionUtils.h"
-#include "PreClusterUtils.h"
+#include "DigitUtils.h"
 #include "PlotsUtils.h"
+#include "PreClusterUtils.h"
+#include "ResolutionUtils.h"
 
 using o2::mch::Cluster;
 using o2::mch::Digit;
@@ -35,15 +38,23 @@ static constexpr double pi = 3.14159265358979323846;
 // gSystem->Load("libO2MCHGeometryTransformer"),  gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
 
 // Fill a THnSparse (10 axis) with the residuals and others information of the pre-cluster, to be treated later in ProjectionSparse.C
-void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* outFile = "residuals_sparse.root", int correctADCfit = 5, int correctADC = 15, bool correctCharge = false)
+void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* outFile = "residuals_sparse.root",
+                     double minADCFit = 5., int minADC = 15, bool correctCharge = false)
 {
 
   // load CCDB objects
   InitFromCCDB(run, true, true, false);
 
-  if (correctADCfit != 0) {
-    std::cout << "-- WARNING -- : Fit ADC selection is activated " << std::endl;
-    std::cout << "SELECTION : " << std::abs(correctADCfit) << " < FitADC" << std::endl;
+  auto adcFitThreshold = std::abs(minADCFit);
+  if (minADCFit != 0.) {
+    std::cout << "-- WARNING -- : Fit ADC selection is activated" << std::endl;
+    std::cout << "SELECTION : Fit ADC >= " << adcFitThreshold << std::endl;
+  }
+
+  auto adcThreshold = static_cast<uint32_t>(std::abs(minADC));
+  if (minADC != 0) {
+    std::cout << "-- WARNING -- : ADC selection is activated" << std::endl;
+    std::cout << "SELECTION : ADC >= " << adcThreshold << std::endl;
   }
 
   // load histograms
@@ -59,33 +70,31 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
   TTreeReaderValue<int> trackTime(*dataReader, "trackTime");
   TTreeReaderValue<Cluster> cluster(*dataReader, "clusters");
   TTreeReaderValue<std::vector<Digit>> digits(*dataReader, "digits");
-  std::unique_ptr<TTreeReaderArray<double>> fitParameters{};
-  std::unique_ptr<TTreeReaderArray<double>> trueParameters{};
 
   if (!dataReader->GetTree()->FindBranch("fitParameters")) {
     LOGP(error, "unable to load branch \"fitParameters\" from {}", inFile);
     exit(-1);
   }
-  fitParameters = std::make_unique<TTreeReaderArray<double>>(*dataReader, "fitParameters");
+  TTreeReaderArray<double> fitParameters(*dataReader, "fitParameters");
+
   // detect ToyMC input : "parameters" carries true pre-noise values {X, Y, K3x, K3y, Qb_true, Qnb_true} (optional)
+  std::unique_ptr<TTreeReaderArray<double>> trueParameters{};
   if (dataReader->GetTree()->FindBranch("parameters")) {
     trueParameters = std::make_unique<TTreeReaderArray<double>>(*dataReader, "parameters");
   }
   bool isTMC = trueParameters != nullptr;
 
-  std::unique_ptr<TTreeReaderValue<double>> pvalue{};
   if (!dataReader->GetTree()->FindBranch("pvalue")) {
     LOGP(error, "unable to load branch \"pvalue\" from {}", inFile);
     exit(-1);
   }
-  pvalue = std::make_unique<TTreeReaderValue<double>>(*dataReader, "pvalue");
+  TTreeReaderValue<double> pvalue(*dataReader, "pvalue");
 
-  std::unique_ptr<TTreeReaderValue<double>> chi2{};
   if (!dataReader->GetTree()->FindBranch("chi2")) {
     LOGP(error, "unable to load branch \"chi2\" from {}", inFile);
     exit(-1);
   }
-  chi2 = std::make_unique<TTreeReaderValue<double>>(*dataReader, "chi2");
+  TTreeReaderValue<double> chi2(*dataReader, "chi2");
 
   int nClusters = dataReader->GetEntries(false);
   int iCluster(0);
@@ -144,7 +153,9 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
     // cut on digit time
     std::vector<Digit> selectedDigits(*digits);
     selectedDigits.erase(
-      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) { return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.; }),
+      std::remove_if(selectedDigits.begin(), selectedDigits.end(), [&trackTime](const auto& digit) {
+        return std::abs(digit.getTime() + 1.5 - *trackTime) > 10.;
+      }),
       selectedDigits.end());
     if (selectedDigits.empty()) {
       continue;
@@ -167,132 +178,118 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
 
     // cut on precluster charge asymmetry
     auto [chargeNB, chargeB] = GetCharge(selectedDigits, run < 300000);
-
-    // correct charge total bending and charge total nonbending
-    auto local = GlobalToLocal(cluster->getDEId(), cluster->x, cluster->y, cluster->z, run < 300000);
-    if (correctCharge) {
-      auto [chargeFracNB, chargeFracB] = GetChargeFraction(selectedDigits, local.x(), local.y());
-      chargeNB /= chargeFracNB;
-      chargeB /= chargeFracB;
-    }
-
     double chargeAsymm = (chargeNB - chargeB) / (chargeNB + chargeB);
-    double charge = sqrt(chargeNB * chargeB);
-
     if (std::abs(chargeAsymm) > 0.5) {
       continue;
     }
 
-    std::vector<double> parameters;
-    for (int i = 0; i < 6; ++i) {
-      parameters.push_back((*fitParameters)[i]);
+    // correct pad charge and re-cut on cluster charge asymmetry
+    if (correctCharge) {
+      auto [chargeFracNB, chargeFracB] = GetChargeFraction(selectedDigits, fitParameters[0], fitParameters[1]);
+      chargeNB /= chargeFracNB;
+      chargeB /= chargeFracB;
+      chargeAsymm = (chargeNB - chargeB) / (chargeNB + chargeB);
+      if (std::abs(chargeAsymm) > 0.5) {
+        continue;
+      }
     }
 
     // cut on K3
-    if ((parameters[2] < 1e-5) || (parameters[3] < 1e-5)) {
+    if ((fitParameters[2] < 1e-5) || (fitParameters[3] < 1e-5)) {
       discarded_cut_k3++;
       continue;
     }
 
-    // cut on ADC (protection) & ADCfit
-    bool skip = false;
-    bool skip2 = false;
-    const uint32_t adcThreshold = static_cast<uint32_t>(std::abs(correctADC));
-    for (auto digit : selectedDigits) {
-      if (digit.getADC() < adcThreshold) {
-        discarded_cut_ADC++;
-        skip2 = true;
-        break; // stop checking further digits if one fails
+    // store the integrated charge with fit parameters and the plane for each digit
+    gsl::span<double> fitParam(static_cast<double*>(fitParameters.GetAddress()), fitParameters.GetSize());
+    std::vector<double> adcFit{};
+    std::vector<double> plane{};
+    for (const auto& digit : selectedDigits) {
+      adcFit.push_back(GetChargeIntegral(digit, fitParam));
+      plane.push_back(IsBending(digit) ? 1. : -1.);
+    }
+
+    // cut on ADC (protection) and/or ADCfit
+    if (minADC != 0 || minADCFit != 0.) {
+      bool skip = false;
+      bool skip2 = false;
+      int iDigit = -1;
+      for (const auto& digit : selectedDigits) {
+        if (digit.getADC() < adcThreshold) {
+          discarded_cut_ADC++;
+          skip2 = true;
+          break; // stop checking further digits if one fails
+        }
+        if (adcFit[++iDigit] < adcFitThreshold) {
+          discarded_cut_ADC_fit++;
+          skip = true;
+          break; // stop checking further digits if one fails
+        }
       }
-
-      if (ADCFit(digit, parameters) < std::abs(correctADCfit)) {
-        discarded_cut_ADC_fit++;
-        skip = true;
-        break; // stop checking further digits if one fails
+      if (skip2 && minADC > 0) { // skip clusters with at least one ADC < minADC
+        continue;
+      }
+      if (!skip2 && minADC < 0) { // skip clusters where all ADC > |minADC| (keep only those rejected by the positive cut)
+        continue;
+      }
+      if (skip && minADCFit > 0.) { // skip clusters with at least one ADCfit < minADCFit
+        continue;
+      }
+      if (!skip && minADCFit < 0.) { // skip clusters where all ADCfit > |minADCFit| (keep only those rejected by the positive cut)
+        continue;
       }
     }
 
-    if (skip2 && correctADC > 0) { // skip clusters with at least one ADC < correctADC
-      continue;
-    }
-    if (!skip2 && correctADC < 0) { // skip clusters where all ADC > |correctADC| (keep only those rejected by the positive cut)
-      continue;
-    }
+    double charge = sqrt(chargeNB * chargeB);
+    float dx_new = DistanceToClosestWire(cluster->getDEId(), fitParameters[0]); // use local X
 
-    if (skip && correctADCfit > 0) { // skip clusters with at least one ADCfit < correctADCfit
-      continue;
-    }
-    if (!skip && correctADCfit < 0) { // skip clusters where all ADCfit > |correctADCfit| (keep only those rejected by the positive cut)
-      continue;
-    }
+    std::vector<double> clusterParameters;
+    clusterParameters.push_back(charge);
+    clusterParameters.push_back(chargeAsymm);
+    clusterParameters.push_back(dx_new);
+    clusterParameters.push_back(*pvalue);
+    clusterParameters.push_back(chargeB);
+    clusterParameters.push_back(chargeNB);
 
     int iSt = (cluster->getChamberId() < 4) ? cluster->getChamberId() / 2 : 2;
-    float dx_new = DistanceToClosestWire(cluster->getDEId(), parameters[0]); // use local X
-
-    parameters.push_back(charge);      // parameters[6]
-    parameters.push_back(chargeAsymm); // parameters[7]
-    parameters.push_back(dx_new);      // parameters[8]
-    parameters.push_back(**pvalue);    // parameters[9]
-    parameters.push_back(chargeB);     // parameters[10]
-    parameters.push_back(chargeNB);    // parameters[11]
-
-    for (auto digit : selectedDigits) {
-      FillResolutionInfo(digit, parameters, hPreClusterInfoMULTI[iSt]);
+    int iDigit = -1;
+    for (const auto& digit : selectedDigits) {
+      ++iDigit;
+      FillResolutionInfo(digit, adcFit[iDigit], plane[iDigit], clusterParameters, hPreClusterInfoMULTI[iSt]);
     }
 
     // fill true-charge THnSparses for ToyMC (Measured - True)
-    // use fitted TMC position/K3/wire/pvalue for axes, override only charges with true pre-noise values
     if (isTMC) {
-      double Qb_true = (*trueParameters)[4];
-      double Qnb_true = (*trueParameters)[5];
-      double Q_tot = std::sqrt(Qb_true * Qnb_true);
-
       // parNoise: residual = ADC_measured - rho(X_true, K3_true) * Q_true_cathode = pure noise
-      std::vector<double> parNoise = parameters; // start from fitted TMC parameters (all 12 elements)
-      parNoise[0] = (*trueParameters)[0];        // X_true
-      parNoise[1] = (*trueParameters)[1];        // Y_true
-      parNoise[2] = (*trueParameters)[2];        // K3x_true
-      parNoise[3] = (*trueParameters)[3];        // K3y_true
-      parNoise[4] = Qb_true;
-      parNoise[5] = Qnb_true;
-      parNoise[10] = Qb_true;
-      parNoise[11] = Qnb_true;
+      gsl::span<double> parNoise(static_cast<double*>(trueParameters->GetAddress()), trueParameters->GetSize());
 
       // parTotal: residual = ADC_measured - rho(X_true, K3_true) * Q_tot = noise + asymmetry (non-zero when Qb_true != Qnb_true)
-      std::vector<double> parTotal = parameters;
-      parTotal[0] = (*trueParameters)[0]; // X_true
-      parTotal[1] = (*trueParameters)[1]; // Y_true
-      parTotal[2] = (*trueParameters)[2]; // K3x_true
-      parTotal[3] = (*trueParameters)[3]; // K3y_true
-      parTotal[4] = Q_tot;
-      parTotal[5] = Q_tot;
-      parTotal[10] = Q_tot;
-      parTotal[11] = Q_tot;
+      std::vector<double> parTotal(parNoise.data(), parNoise.data() + 4);
+      double Q_tot = std::sqrt((*trueParameters)[4] * (*trueParameters)[5]);
+      parTotal.push_back(Q_tot);
+      parTotal.push_back(Q_tot);
 
-      for (auto digit : selectedDigits) {
-        FillResolutionInfo(digit, parNoise, hPreClusterInfoNoise[iSt]);
-        FillResolutionInfo(digit, parTotal, hPreClusterInfoTotal[iSt]);
-      }
-      {
-        std::vector<double> pre_fit(parameters.begin(), parameters.begin() + 6);
-        std::vector<double> pre_true(parNoise.begin(), parNoise.begin() + 6);
-        for (auto digit : selectedDigits) {
-          h2ADCtrueVsADCfit[iSt]->Fill(ADCFit(digit, pre_fit), ADCFit(digit, pre_true));
-        }
+      iDigit = -1;
+      for (const auto& digit : selectedDigits) {
+        ++iDigit;
+        auto adcTrue = GetChargeIntegral(digit, parNoise);
+        FillResolutionInfo(digit, adcTrue, plane[iDigit], clusterParameters, hPreClusterInfoNoise[iSt]);
+        FillResolutionInfo(digit, GetChargeIntegral(digit, parTotal), plane[iDigit], clusterParameters, hPreClusterInfoTotal[iSt]);
+        h2ADCtrueVsADCfit[iSt]->Fill(adcFit[iDigit], adcTrue);
       }
     }
 
     // histograms that can't be in the THnSparse
     hAsymm[2 * iSt]->Fill(chargeAsymm);
-    hAsymm[2 * iSt + 1]->Fill((parameters[5] - parameters[4]) / (parameters[4] + parameters[5]));
+    hAsymm[2 * iSt + 1]->Fill((fitParameters[5] - fitParameters[4]) / (fitParameters[4] + fitParameters[5]));
     auto [nPadsNB, nPadsB] = GetNPads(selectedDigits);
-    h2chi2_ndf[iSt]->Fill((nPadsNB + nPadsB - 4), **chi2);
-    hprob[iSt]->Fill(**pvalue);
+    h2chi2_ndf[iSt]->Fill((nPadsNB + nPadsB - 4), *chi2);
+    hprob[iSt]->Fill(*pvalue);
   }
 
   dataFileIn->Close();
 
-  std::cout << "Creating fit status plots ..." << std::endl;
+  std::cout << "\r\033[KCreating fit status plots ..." << std::endl;
   gStyle->SetOptStat(1);
   plot2D(h2chi2_ndf, "c_chi2_ndf", "chi2 vs ndf");
   plot1D(hprob, "c_prob", "p-value");
@@ -349,7 +346,7 @@ void ResidualsSparse(int run, const char* inFile = "clusters.root", const char* 
 
   auto tEnd = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> timer = tEnd - tStart;
-  cout << "\r\033[Kprocessing completed. Duration = " << timer.count() << " s" << endl;
+  cout << "processing completed. Duration = " << timer.count() << " s" << endl;
   cout << "discarded clusters (cut on K3): " << discarded_cut_k3 << " / " << nClusters << endl;
   cout << "discarded clusters (cut on ADC): " << discarded_cut_ADC << " / " << nClusters << endl;
   cout << "discarded clusters (cut on ADCfit): " << discarded_cut_ADC_fit << " / " << nClusters << endl;

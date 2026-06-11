@@ -11,12 +11,8 @@
 #include <TROOT.h>
 
 #include "PlotsUtils.h"
-#include "ResolutionUtils.h"
 
 //_________________________________________________________________________________________________
-// require the MCH mapping to be loaded:
-// gSystem->Load("libO2MCHGeometryTransformer"), gSystem->Load("libO2MCHMappingImpl4"), gSystem->Load("libO2MCHTracking")
-
 // This macro give the distribution of k3x and k3y for the station 1, 2 and 345
 // cuts on asymmetry, total charge of the precluster, pvalue, total momentum, track angle and the distance to the closest wire can be made
 // cuts mean looking into a specific range (except for wire)
@@ -28,8 +24,7 @@ void ProjectionK3Sparse(
   const std::pair<std::optional<double>, std::optional<double>>& chargetot = {std::nullopt, std::nullopt},
   const std::pair<std::optional<double>, std::optional<double>>& p = {std::nullopt, std::nullopt},
   const std::pair<std::optional<double>, std::optional<double>>& phi = {std::nullopt, std::nullopt},
-  const std::string& wire = "",
-  const std::pair<std::optional<double>, std::optional<double>>& fraction = {std::nullopt, std::nullopt})
+  const std::string& wire = "")
 {
   auto warning = [](const std::string& label, const auto& range) {
     if (range.first && range.second) {
@@ -43,7 +38,6 @@ void ProjectionK3Sparse(
   warning("Track total momentum", p);
   warning("Track angle", phi);
   warning("P-Value", pvalue);
-  warning("Fraction", fraction);
 
   if (!wire.empty()) {
     std::cout << "-- WARNING -- : WIRE selection is activated\n";
@@ -67,7 +61,7 @@ void ProjectionK3Sparse(
   for (int i = 0; i < 3; i++) {
     auto sName = fmt::format("MultiK3PreCluster{}", sStation[i]);
 
-    // multi dimensional histogram : contains as dim : {p-value, k3x, k3y, ADC_cluster, p , phi, nSamples, Asymm, Wire, Bending}
+    // multi dimensional histogram : contains as dim : {p-value, k3x, k3y, ADC_cluster, p , phi, Asymm, Wire}
     auto hSparse = dynamic_cast<THnSparse*>(f.Get(sName.c_str()));
     if (!hSparse) {
       std::cerr << "Warning: Could not find THnSparse " << sName << std::endl;
@@ -99,11 +93,6 @@ void ProjectionK3Sparse(
     // Track angle (degrees)
     if (phi.first && phi.second) {
       hSparse->GetAxis(5)->SetRangeUser(*phi.first, *phi.second);
-    }
-
-    // fraction
-    if (fraction.first && fraction.second) {
-      hSparse->GetAxis(8)->SetRangeUser(*fraction.first, *fraction.second);
     }
 
     // Wire

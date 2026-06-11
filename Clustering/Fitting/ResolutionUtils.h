@@ -5,8 +5,6 @@
 #include <cmath>
 #include <utility>
 #include <vector>
-#include <fmt/format.h>
-#include <gsl/span>
 
 #include <TF1.h>
 #include <THnSparse.h>
@@ -15,61 +13,11 @@
 #include <TAxis.h>
 #include <TList.h>
 #include <TString.h>
-#include <TFile.h>
-#include "TTreeReaderArray.h"
-#include <TTreeReader.h>
-#include <TTreeReaderValue.h>
 
-#include "CommonUtils/ConfigurableParam.h"
 #include "DataFormatsMCH/Digit.h"
-#include "MCHMappingInterface/Segmentation.h"
-#include "MCHSimulation/Response.h"
 
 using o2::mch::Digit;
-//_________________________________________________________________________________________________
-// setup the mathieson response parameters
-void SetupMathieson(const double sqrtk3x_1, const double sqrtk3y_1, const double sqrtk3x_2345, const double sqrtk3y_2345)
-{
-  std::string K3X_1 = std::to_string(sqrtk3x_1);
-  std::string K3Y_1 = std::to_string(sqrtk3y_1);
-  std::string K3X_2345 = std::to_string(sqrtk3x_2345);
-  std::string K3Y_2345 = std::to_string(sqrtk3y_2345);
 
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKx3St1", K3X_1);
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKy3St1", K3Y_1);
-
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKx3St2345", K3X_2345);
-  o2::conf::ConfigurableParam::setValue("MCHResponse.mathiesonSqrtKy3St2345", K3Y_2345);
-}
-//_________________________________________________________________________________________________
-// return the charge fraction seen by digit on a cathode given the cluster position
-// the vector "parameters" is a 6 size vector which is defined as : parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot}
-double ADCFit(const Digit digit, std::vector<double> parameters)
-{
-  auto sqrtK3x = sqrt(parameters[2]);
-  auto sqrtK3y = sqrt(parameters[3]);
-
-  static double lastSqrtK3x = -1., lastSqrtK3y = -1.;
-  if (sqrtK3x != lastSqrtK3x || sqrtK3y != lastSqrtK3y) {
-    SetupMathieson(sqrtK3x, sqrtK3y, sqrtK3x, sqrtK3y);
-    lastSqrtK3x = sqrtK3x;
-    lastSqrtK3y = sqrtK3y;
-  }
-
-  const o2::mch::Response response[] = {{o2::mch::Station::Type1}, {o2::mch::Station::Type2345}};
-
-  const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
-  int iSt = (digit.getDetID() < 300) ? 0 : 1;
-
-  auto padid = digit.getPadID();
-  auto dx = segmentation.padSizeX(padid) * 0.5;
-  auto dy = segmentation.padSizeY(padid) * 0.5;
-  auto xPad = segmentation.padPositionX(padid) - parameters[0];
-  auto yPad = segmentation.padPositionY(padid) - parameters[1];
-  auto qPad = response[iSt].chargePadfraction(xPad - dx, xPad + dx, yPad - dy, yPad + dy);
-
-  return qPad * (segmentation.isBendingPad(padid) ? parameters[4] : parameters[5]);
-}
 //_________________________________________________________________________________________________
 // create the THnSparse (10 axes) to extract the resolution in the residuals later
 THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
@@ -132,47 +80,46 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 }
 //_________________________________________________________________________________________________
 // fill THnSparse (10 axes) with the preclusters characteristics
-// the vector "parameters" is a 12 size vector which is defined as :
-// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, chargeB, chargeNB}
-void FillResolutionInfo(const Digit digit, std::vector<double> parameters, THnSparseD* h)
+// plane = 1. (bending) or -1. (non-bending)
+// the vector "parameters" is a 6 size vector which is defined as :
+// parameters = {sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, chargeB, chargeNB}
+void FillResolutionInfo(const Digit& digit, double ADC_fit, double plane,
+                        const std::vector<double>& parameters, THnSparseD* h)
 {
-  // pre-parameters is {X, Y, K3x, K3y, Qb_tot, Qnb_tot}
-  std::vector<double> pre_parameters(parameters.begin(), parameters.begin() + 6);
-
-  const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
-  auto padid = digit.getPadID();
-
   Double_t position = -1.;
-  if ((std::abs(parameters[8]) < 0.015)) { //"top"
+  if ((std::abs(parameters[2]) < 0.015)) { //"top"
     position = 0.;
-  } else if (std::abs(parameters[8]) > 0.075) { //"between"
+  } else if (std::abs(parameters[2]) > 0.075) { //"between"
     position = 2.;
-  } else if ((std::abs(parameters[8]) > 0.015) && (std::abs(parameters[8]) < 0.075)) { //"crossover"
+  } else if ((std::abs(parameters[2]) > 0.015) && (std::abs(parameters[2]) < 0.075)) { //"crossover"
     position = 1.;
   }
 
-  Double_t ADC_fit = ADCFit(digit, pre_parameters);
   Double_t ADC_mes = digit.getADC();
-  Double_t residuals = (ADC_mes - ADC_fit);
-  Double_t ADC_cluster = parameters[6];
+  Double_t residuals = ADC_mes - ADC_fit;
   Double_t nSamples = digit.getNofSamples();
-  Double_t Asymm = parameters[7];
-  Double_t Wire = position;
-  Double_t Bending = (segmentation.isBendingPad(padid) ? 1. : -1.);
-  Double_t pvalue = parameters[9];
-  Double_t fraction = (segmentation.isBendingPad(padid) ? digit.getADC() / parameters[10] : digit.getADC() / parameters[11]);
+  Double_t fraction = (plane > 0.) ? ADC_mes / parameters[4] : ADC_mes / parameters[5];
 
   Double_t values[10] = {
-    pvalue, residuals, ADC_fit, ADC_mes, ADC_cluster,
-    nSamples, Asymm, Wire, Bending, fraction};
+    parameters[3], // pvalue
+    residuals,     // residuals
+    ADC_fit,       // ADC_fit
+    ADC_mes,       // ADC_mes
+    parameters[0], // ADC_cluster
+    nSamples,      // nSamples
+    parameters[1], // Asymm
+    position,      // Wire
+    plane,         // Cathode
+    fraction       // fraction
+  };
 
   h->Fill(values);
 }
 //_________________________________________________________________________________________________
-// create the THnSparse (9 axis) for k3 studies
+// create the THnSparse (8 axis) for k3 studies
 THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
 {
-  const Int_t nDim = 9;
+  const Int_t nDim = 8;
 
   Int_t nbins[nDim] = {
     1000, // pvalue
@@ -182,8 +129,7 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     51,   // p
     62,   // phi
     280,  // Asymm
-    3,    // Wire
-    500   // fraction
+    3     // Wire
   };
 
   Double_t xmin[nDim] = {
@@ -194,8 +140,7 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     -0.5,  // p
     -15.5, // phi
     -0.7,  // Asymm
-    -0.5,  // Wire
-    0.     // fraction
+    -0.5   // Wire
   };
 
   Double_t xmax[nDim] = {
@@ -206,8 +151,7 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
     50.5,  // p
     15.5,  // phi
     0.7,   // Asymm
-    2.5,   // Wire
-    1.     // fraction
+    2.5    // Wire
   };
 
   TString name = Form("MultiK3PreCluster%s", extension);
@@ -216,8 +160,7 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
   THnSparseD* hSparse = new THnSparseD(name, title, nDim, nbins, xmin, xmax);
 
   const char* axisTitles[nDim] = {
-    "pvalue", "k3x", "k3y", "ADC_cluster", "p", "phi",
-    "Asymm", "Wire", "fraction"};
+    "pvalue", "k3x", "k3y", "ADC_cluster", "p", "phi", "Asymm", "Wire"};
 
   for (Int_t i = 0; i < nDim; ++i) {
     hSparse->GetAxis(i)->SetTitle(axisTitles[i]);
@@ -226,10 +169,10 @@ THnSparseD* CreatePreClusterInfoMULTIK3(const char* extension = "")
   return hSparse;
 }
 //_________________________________________________________________________________________________
-// fill THnSparse (9 axis) for k3 studies
+// fill THnSparse (8 axis) for k3 studies
 // the vector parameters is a 12 size vector which is defined as :
-// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, track angle, track momentum, fraction pad}
-void FillK3Info(const Digit digit, std::vector<double> parameters, THnSparseD* h)
+// parameters = {X, Y, K3x, K3y, Qb_tot, Qnb_tot, sqrt(Qb_tot * Qnb_tot), (NB - B)/(NB + B), distance closest wire, pvalue, track angle, track momentum}
+void FillK3Info(const std::vector<double>& parameters, THnSparseD* h)
 {
   Double_t position = -1.;
   if ((std::abs(parameters[8]) < 0.015)) { //"top"
@@ -240,29 +183,15 @@ void FillK3Info(const Digit digit, std::vector<double> parameters, THnSparseD* h
     position = 1.;
   }
 
-  const auto& segmentation = o2::mch::mapping::segmentation(digit.getDetID());
-  auto padid = digit.getPadID();
-
-  Double_t ADC_cluster = parameters[6];
-  Double_t Asymm = parameters[7];
-  Double_t Wire = position;
-  Double_t pvalue = parameters[9];
-  Double_t k3x = parameters[2];
-  Double_t k3y = parameters[3];
-  Double_t phi = parameters[10];
-  Double_t p = parameters[11];
-  Double_t fraction = (segmentation.isBendingPad(padid) ? digit.getADC() / parameters[4] : digit.getADC() / parameters[5]);
-
-  Double_t values[9] = {
-    pvalue,
-    k3x,
-    k3y,
-    ADC_cluster,
-    p,
-    phi,
-    Asymm,
-    Wire,
-    fraction,
+  Double_t values[8] = {
+    parameters[9],  // pvalue
+    parameters[2],  // k3x
+    parameters[3],  // k3y
+    parameters[6],  // ADC_cluster
+    parameters[11], // p
+    parameters[10], // phi
+    parameters[7],  // Asymm
+    position        // Wire
   };
 
   h->Fill(values);
