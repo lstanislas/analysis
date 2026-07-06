@@ -425,17 +425,17 @@ void tGraph(std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, const 
 }
 
 //_________________________________________________________________________________________________
-// take two vectors of TH1D object corresponding to a certain station and a certain cathode, divide a canvas in
-// eight (corresponding to a choice of ADC binning), plots the graphs
-void tHist(std::vector<TH1D*>& hists1, std::vector<TH1D*>& hists2, const std::string& name, int station, int cathode)
+// take two vectors of TH1D object corresponding to a certain station and a certain cathode,
+// divide a canvas in n (corresponding to a choice of ADC binning), plots the graphs
+void tHist(std::vector<TH1D*>& hists1, std::vector<TH1D*>& hists2, const std::string& name, int station, int cathode, int n)
 {
-  std::vector<TH1D*> subh1(hists1.begin() + 8 * (2 * station + cathode), hists1.begin() + 8 * (2 * station + cathode + 1));
-  std::vector<TH1D*> subh2(hists2.begin() + 8 * (2 * station + cathode), hists2.begin() + 8 * (2 * station + cathode + 1));
+  std::vector<TH1D*> subh1(hists1.begin() + n * (2 * station + cathode), hists1.begin() + n * (2 * station + cathode + 1));
+  std::vector<TH1D*> subh2(hists2.begin() + n * (2 * station + cathode), hists2.begin() + n * (2 * station + cathode + 1));
 
   TCanvas* c = new TCanvas(name.c_str(), name.c_str(), 1200, 800);
-  c->Divide(2, 4);
+  c->Divide(2, (n + 1) / 2);
 
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < n; ++i) {
     c->cd(i + 1);
     gPad->SetGrid();
     gPad->SetLogy();
@@ -445,9 +445,10 @@ void tHist(std::vector<TH1D*>& hists1, std::vector<TH1D*>& hists2, const std::st
     double ymax = std::max(max1, max2) * 1.5;
 
     subh1[i]->GetXaxis()->SetRangeUser(-50, 50);
+    subh2[i]->GetXaxis()->SetRangeUser(-50, 50);
     subh1[i]->SetMaximum(ymax);
     subh1[i]->Draw("HIST");
-    subh2[i]->Draw("HIST SAME");
+    subh2[i]->Draw("HIST SAMES");
 
     TLegend* leg = new TLegend(0.65, 0.70, 0.88, 0.88);
     TString title1 = Form("%s (N=%d)", subh1[i]->GetTitle(), (int)subh1[i]->GetEntries());

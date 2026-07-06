@@ -26,19 +26,51 @@
 // sparseTypes =  "Fit" , "Noise" or "Total"
 // noise : "" (default) = sADC with alpha=1 ; "sADC_XpX" = alpha*sqrt(ADC) ; "MC_XpX" = 0.5*(sqrt(nSamples)+XpX) ; "MULT_XpX_XpX_XpX" = XpX*sqrt(ADC) + XpX*ADC + XpX*ADC*sqrt(ADC)
 
-void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.root", const std::string& file2 = "tmc_projection_sparse.root", const std::string& outFile = "resolution_ratio.root", const std::string& sparseType1 = "Fit", const std::string& sparseType2 = "Fit", const std::string& noise = "")
+void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.root",
+                             const std::string& file2 = "tmc_projection_sparse.root",
+                             const std::string& outFile = "resolution_ratio.root",
+                             const std::string& sparseType1 = "Fit",
+                             const std::string& sparseType2 = "Fit",
+                             const std::string& noise = "")
 {
-  static const std::string sStation_[3] = {"St1", "St2", "St345"};
-  static const std::string sCathode_[2] = {"Bend", "NBend"};
+  TH1::AddDirectory(kFALSE);
 
-  auto extractGraphsAndHistos = [](TFile& f, const std::string& sparseType, std::vector<TGraphAsymmErrors*>& graphs, std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2, std::vector<TH1D*>& histograms) {
-    static const std::vector<std::pair<int, int>> chargeLimits{
-      {20, 40}, {40, 60}, {60, 80}, {80, 120}, {120, 200}, {200, 400}, {400, 700}, {700, 1000} // ADCfit binning range for the 5th type
-    };
+  static const std::string sStation[3] = {"St1", "St2", "St345"};
+  static const std::string sCathode[2] = {"Bend", "NBend"};
+
+  // ADCfit binning range for the 5th type
+  static const std::vector<std::pair<int, int>> chargeLimits{
+    {20, 39}, {40, 59}, {60, 79}, {80, 119}, {120, 199}, {200, 399}, {400, 699}, {700, 1000}};
+
+  auto extractGraphsAndHistos = [](TFile& f, const std::string& sparseType, std::vector<TGraphAsymmErrors*>& graphs,
+                                   std::vector<TGraph*>& graphs1, std::vector<TGraph*>& graphs2,
+                                   std::vector<TH1D*>& histograms) {
+    // get canvas with 2D plots
+    auto c2DName = fmt::format("c_2Dresiduals_{}", sparseType);
+    TCanvas* c2D = dynamic_cast<TCanvas*>(f.Get(c2DName.c_str()));
+    if (!c2D) {
+      Warning("LoadCanvas", "Canvas '%s' not found in file!", c2DName.c_str());
+      return;
+    }
+
     // loop (St.1, St.2, St.345) x (B, NB)
     for (int i = 0; i < 6; ++i) {
 
-      auto lName = fmt::format("Residual_{}_{}_{}", sparseType, sStation_[i / 2], sCathode_[i % 2]);
+      // --- get 2D histos and project them in ADCfit binning ranges ---
+      auto h2DName = fmt::format("h2D_{}_{}_{}", sparseType, sStation[i / 2], sCathode[i % 2]);
+      TH2D* h2D = dynamic_cast<TH2D*>(c2D->FindObject(h2DName.c_str()));
+      if (!h2D) {
+        Warning("LoadHistos", "h2D '%s' not found in file!", h2DName.c_str());
+        continue;
+      }
+
+      for (const auto& [min, max] : chargeLimits) {
+        histograms.push_back(h2D->ProjectionY(fmt::format("[{},{}]", min, max).c_str(),
+                                              h2D->GetXaxis()->FindBin(min), h2D->GetXaxis()->FindBin(max)));
+      }
+
+      // --- get residuals and extract fit results ---
+      auto lName = fmt::format("Residual_{}_{}_{}", sparseType, sStation[i / 2], sCathode[i % 2]);
       TList* list = dynamic_cast<TList*>(f.Get(lName.c_str()));
       if (!list) {
         Warning("LoadTLists", "TList '%s' not found in file!", lName.c_str());
@@ -46,14 +78,6 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
       }
 
       std::vector<double> x, exl, exr, y, ey, mean, Rchi2;
-
-      TH1::AddDirectory(kFALSE);
-      TH1D* hCharge[8]; // TH1D vectors corresponding to the ADCfit binning range
-      for (int j = 0; j < 8; ++j) {
-        std::string hname = Form("[%d,%d]", chargeLimits[j].first, chargeLimits[j].second);
-        hCharge[j] = new TH1D(hname.c_str(), hname.c_str(), 1122, -280.5, 280.5);
-      }
-      // read TList elements
       for (TObject* obj : *list) {
         auto h = dynamic_cast<TH1*>(obj);
         if (!h) {
@@ -65,28 +89,23 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
           std::cerr << "Error: Fit function not found or invalid" << std::endl;
           continue;
         }
+
         std::string name = h->GetName();
         std::stringstream ss(name);
         std::string token;
         std::vector<std::string> tokens;
-
-        while (std::getline(ss, token, '_')) // read the name of the elements from the TList which contain
-          tokens.push_back(token);           // the charge interval in the name, e.g. "projY_h2D_Label_Station_Cathode_ADCmin_ADCmax"
-        if (tokens.size() < 7)
+        while (std::getline(ss, token, '_')) { // read the name of the elements from the TList which contain
+          tokens.push_back(token);             // the charge interval in the name, e.g. "projY_h2D_Label_Station_Cathode_ADCmin_ADCmax"
+        }
+        if (tokens.size() < 7) {
           continue;
+        }
 
-        double X = std::stod(tokens[5]); // lower ADC range
-        double Y = std::stod(tokens[6]); // higher ADC range
-
+        double X = std::stod(tokens[5]);     // lower ADC range
+        double Y = std::stod(tokens[6]);     // higher ADC range
         double avg = 0.5 * (X + Y);          // mean of the ADC range
         double dx = std::abs(X - avg) + 0.5; // lower bin edge length
         double dy = std::abs(Y - avg) + 0.5; // higher bin edge length
-
-        for (int j = 0; j < 8; j++) { // add the histogram in the corresponding binning range
-          if ((chargeLimits[j].first <= X) && (chargeLimits[j].second >= Y)) {
-            hCharge[j]->Add(h);
-          }
-        }
 
         x.push_back(avg);
         exl.push_back(dx);
@@ -103,9 +122,6 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
       graphs1.push_back(new TGraph((int)x.size(), x.data(), mean.data()));
       // vector for file2
       graphs2.push_back(new TGraph((int)x.size(), x.data(), Rchi2.data()));
-      for (int j = 0; j < 8; ++j) {
-        histograms.push_back(hCharge[j]);
-      }
     }
   };
 
@@ -113,12 +129,9 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
   TFile f2(file2.c_str(), "read");
   TFile fout(outFile.c_str(), "recreate");
 
-  std::string sStation[3] = {"St1", "St2", "St345"};
-
   std::vector<TGraphAsymmErrors*> g1, g2;
   std::vector<TGraph*> mean1, mean2, Rchi2_1, Rchi2_2;
   std::vector<TH1D*> h1, h2;
-
   extractGraphsAndHistos(f1, sparseType1, g1, mean1, Rchi2_1, h1);
   extractGraphsAndHistos(f2, sparseType2, g2, mean2, Rchi2_2, h2);
 
@@ -135,9 +148,10 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
     FillInfoGraph(mean2[i], "ADC fit", "#mu", sStation[i / 2], cathode, false);
     FillInfoGraph(Rchi2_2[i], "ADC fit", "#chi^{2}/ndf", sStation[i / 2], cathode, false);
 
-    for (int j = 0; j < 8; j++) {
-      FillInfoHist(h1[j + 8 * i], "Residuals", "Counts", sStation[i / 2], cathode, true);
-      FillInfoHist(h2[j + 8 * i], "Residuals", "Counts", sStation[i / 2], cathode, false);
+    int nChargeLimits = chargeLimits.size();
+    for (int j = 0; j < nChargeLimits; j++) {
+      FillInfoHist(h1[j + nChargeLimits * i], "Residuals", "Counts", sStation[i / 2], cathode, true);
+      FillInfoHist(h2[j + nChargeLimits * i], "Residuals", "Counts", sStation[i / 2], cathode, false);
     }
   }
 
@@ -163,7 +177,7 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
     for (int j = 0; j < 2; j++) {
       std::string cathode = (j == 0) ? "(B)" : "(NB)";
       auto hName = fmt::format("h_BinResidualADC_{}_{}", sStation[i], cathode);
-      tHist(h1, h2, hName, i, j);
+      tHist(h1, h2, hName, i, j, chargeLimits.size());
     }
   }
 
