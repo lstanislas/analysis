@@ -65,8 +65,11 @@ void DrawResolutionRatioComp(const std::string& file1 = "data_projection_sparse.
       }
 
       for (const auto& [min, max] : chargeLimits) {
-        histograms.push_back(h2D->ProjectionY(fmt::format("[{},{}]", min, max).c_str(),
-                                              h2D->GetXaxis()->FindBin(min), h2D->GetXaxis()->FindBin(max)));
+        int binMin = h2D->GetXaxis()->FindBin(min);
+        int binMax = h2D->GetXaxis()->FindBin(max);
+        int trueMin = std::round(h2D->GetXaxis()->GetBinLowEdge(binMin));
+        int trueMax = std::round(h2D->GetXaxis()->GetBinUpEdge(binMax)) - 1;
+        histograms.push_back(h2D->ProjectionY(fmt::format("[{},{}]", trueMin, trueMax).c_str(), binMin, binMax));
       }
 
       // --- get residuals and extract fit results ---

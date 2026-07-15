@@ -144,12 +144,14 @@ void ProjectionSparse(
       Resolution(list, h2D, statistic, auto_bin);
       allListResidual.push_back(list);
 
-      TH1D* tmpProjX = h2D->ProjectionX("_tmpProjX");
-      int lastBin = tmpProjX->FindLastBinAbove(0);
-      if (lastBin > 0) {
-        h2D->GetXaxis()->SetRangeUser(20, tmpProjX->GetBinCenter(lastBin) * 1.05);
+      // reduce the binning to avoid memory issue when saving the canvas
+      h2D->RebinX(5);
+
+      int firstBin = h2D->GetXaxis()->FindBin(20);
+      int lastBin = h2D->FindLastBinAbove(0);
+      if (lastBin > firstBin) {
+        h2D->GetXaxis()->SetRange(firstBin, lastBin);
       }
-      delete tmpProjX;
 
       labelHistos[label].push_back(h2D);
     }

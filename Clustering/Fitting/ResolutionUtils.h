@@ -6,12 +6,14 @@
 #include <utility>
 #include <vector>
 
+#include <Math/ProbFunc.h>
+#include <TAxis.h>
 #include <TF1.h>
 #include <THnSparse.h>
 #include <TH1D.h>
 #include <TH2D.h>
-#include <TAxis.h>
 #include <TList.h>
+#include <TMath.h>
 #include <TString.h>
 
 #include "DataFormatsMCH/Digit.h"
@@ -26,7 +28,7 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 
   Int_t nbins[nDim] = {
     1000,  // pvalue
-    1122,  // residuals
+    8000,  // residuals
     10001, // ADC_fit
     10001, // ADC_mes
     5001,  // ADC_cluster
@@ -39,7 +41,7 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 
   Double_t xmin[nDim] = {
     0.,     // pvalue
-    -280.5, // residuals
+    -2000., // residuals
     -0.5,   // ADC_fit
     -0.5,   // ADC_mes
     -5,     // ADC_cluster
@@ -52,7 +54,7 @@ THnSparseD* CreatePreClusterInfoMULTI(const char* extension = "")
 
   Double_t xmax[nDim] = {
     1.,      // pvalue
-    280.5,   // residuals
+    2000.,   // residuals
     10000.5, // ADC_fit
     10000.5, // ADC_mes
     50005,   // ADC_cluster
@@ -198,38 +200,55 @@ void FillK3Info(const std::vector<double>& parameters, THnSparseD* h)
 }
 
 //_________________________________________________________________________________________________
+// fit function of the ADC - ADC_fit residuals that convolutes pad charge resolution with ADC threshold
+// p[0] = normalization
+// p[1] = systematic shift
+// p[2] = resolution
+// p[3] = mean value of the ADC interval being fitted (should be fixed)
+double ADCResolutionWithThreshold(double* x, double* p)
+{
+  // threshold parameters
+  static const double thresholdMean = 22.2;
+  static const double thresholdSigma = 2.8;
+
+  // pad charge resolution
+  double resolution = TMath::Gaus(*x, p[1], p[2], true);
+
+  // probability that the measured value (= fit value + residual) passes the gaussian threshold
+  double threshold = ROOT::Math::gaussian_cdf(p[3] + (*x), thresholdSigma, thresholdMean);
+
+  return p[0] * resolution * threshold;
+}
+
+//_________________________________________________________________________________________________
 // extract the resolution (std) of the residuals distribution for different ADC which are defined as : residuals = ADC - ADC_fit
 // project the TH2D into a corresponding axis ->
-// on X : to chose a bin of ADC which as enough statistic to extract a correct resolution
+// on X : to chose a bin of ADC which has enough statistics to extract a correct resolution
 // on Y : to extract the resolution (std) of the residuals distribution of the corresponding ADC binning
-// the fit for the std is done 3 times because of the shape of the residuals distribution (see current studies)
+// the fit for the std is done several times because of the shape of the residuals distribution (see current studies)
 // use auto binning (size vary with a define statistic) or harcoded binning (pre defined binning)
 // save results in TList with the fit properties (i.e. : chi2, std, mean, ...)
-void Resolution(TList*& list, TH2D* hist2D, int statistics, bool auto_bin)
+void Resolution(TList*& list, TH2D* hist2D, int minStat, bool auto_bin)
 {
   // default digit range value : 20 - 10000 ADC
-  int start = 20, end = 10000;
-  std::vector<double> wavg_charge;
+  static int start = 20;
+  static int end = 10000;
 
   TH1D* projX = hist2D->ProjectionX();
   int binStart = projX->FindBin(start);
   int binEnd = projX->FindBin(end);
-  int bin_i = binStart;
-  double wavg = 0.;
 
   std::vector<std::pair<int, int>> intervals;
 
   if (auto_bin) {
+    int bin_i = binStart;
     for (int bin_j = binStart; bin_j < binEnd; bin_j++) {
 
       int integral = projX->Integral(bin_i, bin_j);
-      wavg += projX->GetBinCenter(bin_j) * projX->GetBinContent(bin_j);
 
-      if (integral > statistics) {
-        wavg_charge.push_back(wavg / integral);
+      if (integral > minStat) {
         intervals.push_back(std::make_pair(bin_i, bin_j));
         bin_i = bin_j + 1;
-        wavg = 0.; // reset wavg to 0
       }
     }
   } else {
@@ -252,60 +271,104 @@ void Resolution(TList*& list, TH2D* hist2D, int statistics, bool auto_bin)
       charge_bin.push_back({i, i + 25});
     }
 
-    for (auto interval : charge_bin) {
-      int bin_i = projX->FindBin(interval.first);
-      int bin_j = projX->FindBin(interval.second);
+    for (const auto& [min, max] : charge_bin) {
+      int bin_i = projX->FindBin(min);
+      int bin_j = projX->FindBin(max);
       int integral = projX->Integral(bin_i, bin_j);
 
-      if (integral > statistics) {
-        double wavg = (interval.first + interval.second) / 2.;
-        wavg_charge.push_back(wavg);
+      if (integral > minStat) {
         intervals.push_back(std::make_pair(bin_i, bin_j));
       }
     }
   }
-  // auto rebin after first gaussian fit
+
   int index = 0;
-  for (auto I : intervals) {
+  for (const auto& [min, max] : intervals) {
+
     // we save the charge interval into the name of the 1D projection
-    TH1D* projY = hist2D->ProjectionY(Form("projY_%s_%d_%d", hist2D->GetName(), static_cast<int>(projX->GetBinCenter(I.first)), static_cast<int>(projX->GetBinCenter(I.second))), I.first, I.second);
+    auto minADC = static_cast<int>(std::round(projX->GetBinCenter(min)));
+    auto maxADC = static_cast<int>(std::round(projX->GetBinCenter(max)));
+    TH1D* projY = hist2D->ProjectionY(Form("projY_%s_%d_%d", hist2D->GetName(), minADC, maxADC), min, max);
 
-    // to guide the gaussian fit
-    double initial_sigma = sqrt(wavg_charge[index]);
-    double min = -1.8 * initial_sigma;
-    double max = 1.8 * initial_sigma;
+    // first gaussian fit to define the binning and set the next fit range around the peak
+    static TF1* fit1 = new TF1("fit1", "gausn");
+    double norm = projY->GetEntries() * projY->GetBinWidth(1);
+    double mean = projY->GetMean();
+    double stdDev = projY->GetStdDev();
+    fit1->SetParameters(norm, mean, 0.5 * stdDev);
+    fit1->SetParLimits(0, 0., 2. * norm);
+    fit1->SetParLimits(1, std::max(mean - 2. * stdDev, projY->GetXaxis()->GetXmin()),
+                       std::min(mean + 2. * stdDev, projY->GetXaxis()->GetXmax()));
+    fit1->SetParLimits(2, 0., 3. * stdDev);
+    int status = projY->Fit(fit1, "BQ");
+    if (status != 0) {
+      printf("%s: first fit first attempt failed with status %d (result = [%f, %f, %f])\n",
+             projY->GetName(), status, fit1->GetParameter(0), fit1->GetParameter(1), fit1->GetParameter(2));
+      fit1->SetParameters(norm, 0., stdDev);
+      fit1->SetParLimits(2, 0., 2. * stdDev);
+      status = projY->Fit(fit1, "BQ", "", -5. * stdDev, 5. * stdDev);
+      if (status != 0) {
+        printf("%s: first fit second attempt failed with status %d (result = [%f, %f, %f])\n",
+               projY->GetName(), status, fit1->GetParameter(0), fit1->GetParameter(1), fit1->GetParameter(2));
+      }
+    }
 
-    TF1* fit = new TF1("fit", "gaus", min, max);
-    fit->SetParameter(0, projY->GetMaximum());
-    fit->SetParameter(1, 0.0);
-    fit->SetParameter(2, 0.5 * initial_sigma);
-    fit->SetParLimits(1, min, max);
-    projY->Fit(fit, "RQ");
+    // rebin
+    double mean1 = fit1->GetParameter(1);
+    double sigma1 = std::abs(fit1->GetParameter(2));
+    if (status != 0 || stdDev < sigma1) {
+      sigma1 = stdDev;
+      mean1 = mean;
+    }
+    int rebin = std::round(sigma1 / 10. / projY->GetXaxis()->GetBinWidth(1));
+    if (rebin > 0) {
+      gErrorIgnoreLevel = kWarning + 1; // silence warning "ngroup=xxx is not an exact divider of nbins=yyy"
+      projY->Rebin(rebin);
+      gErrorIgnoreLevel = 0;
+    }
 
-    double sigma1 = std::abs(fit->GetParameter(2));
-    double mean1 = fit->GetParameter(1);
+    // second fit repeated n times to refine the fit range around the peak
+    for (int i = 0; i < 5; ++i) {
+      static TF1* fit2 = new TF1("fit2", "gausn");
+      double xMin = mean1 - 2. * sigma1;
+      double xMax = mean1 + 2. * sigma1;
+      fit2->SetParameters(norm, mean1, sigma1);
+      status = projY->Fit(fit2, "BQ", "", xMin, xMax);
+      if (status != 0) {
+        printf("%s: second fit first attempt failed with status %d (result = [%f, %f, %f])\n",
+               projY->GetName(), status, fit2->GetParameter(0), fit2->GetParameter(1), fit2->GetParameter(2));
+        fit2->SetParameters(norm, 0., 0.5 * sigma1);
+        status = projY->Fit(fit2, "BQ", "", xMin, xMax);
+        if (status != 0) {
+          printf("%s: second fit second attempt failed with status %d (result = [%f, %f, %f])\n",
+                 projY->GetName(), status, fit2->GetParameter(0), fit2->GetParameter(1), fit2->GetParameter(2));
+          break;
+        }
+      }
+      mean1 = fit2->GetParameter(1);
+      sigma1 = std::abs(fit2->GetParameter(2));
+    }
 
-    //---------- SECOND FIT ----------
-    double range2 = 1.5 * sigma1;
-    fit->SetRange(mean1 - range2, mean1 + range2);
-    fit->SetParLimits(1, mean1 - range2, mean1 + range2);
-    fit->SetParameters(fit->GetParameter(0), mean1, sigma1);
-    projY->Fit(fit, "RQ");
+    // third fit to extract the resolution
+    static TF1* fit3 = new TF1("fit", ADCResolutionWithThreshold, -1000., 1000., 4);
+    double xMin = mean1 - 2. * sigma1;
+    double xMax = mean1 + 2. * sigma1;
+    double meanADC = 0.5 * (minADC + maxADC);
+    fit3->SetParameters(norm, mean1, sigma1, meanADC);
+    fit3->FixParameter(3, meanADC);
+    status = projY->Fit(fit3, "BQ", "", xMin, xMax);
+    if (status != 0) {
+      printf("%s: third fit first attempt failed with status %d (result = [%f, %f, %f])\n",
+             projY->GetName(), status, fit3->GetParameter(0), fit3->GetParameter(1), fit3->GetParameter(2));
+      fit3->SetParameters(norm, 0., 0.5 * sigma1, meanADC);
+      status = projY->Fit(fit3, "BQ", "", xMin, xMax);
+      if (status != 0) {
+        printf("%s: third fit second attempt failed with status %d (result = [%f, %f, %f])\n",
+               projY->GetName(), status, fit3->GetParameter(0), fit3->GetParameter(1), fit3->GetParameter(2));
+      }
+    }
 
-    double sigma2 = std::abs(fit->GetParameter(2));
-    double mean2 = fit->GetParameter(1);
-
-    //---------- THIRD FIT ----------
-    double range3 = 1.5 * sigma2;
-    fit->SetRange(mean2 - range3, mean2 + range3);
-    fit->SetParLimits(1, mean2 - range3, mean2 + range3);
-    fit->SetParameters(fit->GetParameter(0), mean2, sigma2);
-    projY->Fit(fit, "RQ");
-
-    double par[3];
-    fit->GetParameters(par);
     list->Add(projY);
-    delete fit;
     index++;
   }
   delete projX;
